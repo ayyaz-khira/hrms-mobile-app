@@ -29,7 +29,6 @@ function MainLayout() {
         <Stack.Screen name="index" />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="personal-details" />
-        <Stack.Screen name="attendance-details" />
         <Stack.Screen name="apply-leave" />
         <Stack.Screen name="leave-history" />
         <Stack.Screen name="gate-pass" />

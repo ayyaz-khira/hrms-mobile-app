@@ -27,9 +27,12 @@ export default function ApplyLeaveScreen() {
   const [endDate, setEndDate] = useState(new Date(2026, 4, 12));   // May 12, 2026
   const [leaveType, setLeaveType] = useState('Casual Leave');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isHalfDay, setIsHalfDay] = useState(false);
+  const [mailingTo, setMailingTo] = useState('Select Person');
+  const [mailingToEmail, setMailingToEmail] = useState('');
 
   const [pickerVisible, setPickerVisible] = useState(false);
-  const [pickerType, setPickerType] = useState<'start' | 'end' | 'type'>('start');
+  const [pickerType, setPickerType] = useState<'start' | 'end' | 'type' | 'mailing'>('start');
   const [showNativeDatePicker, setShowNativeDatePicker] = useState(false);
 
   const formatDate = (date: Date) => {
@@ -111,8 +114,10 @@ export default function ApplyLeaveScreen() {
         employee: userId,
         leave_type: leaveType,
         from_date: formatDate(startDate),
-        to_date: formatDate(endDate),
+        to_date: isHalfDay ? formatDate(startDate) : formatDate(endDate),
+        half_day: isHalfDay ? 1 : 0,
         reason: reason,
+        leave_approver: mailingToEmail || undefined,
       };
 
       setIsSubmitting(true);
@@ -123,6 +128,7 @@ export default function ApplyLeaveScreen() {
       console.log('📦 Payload:', payload);
 
       const response = await fetch(apiUrl, {
+        credentials: 'include',
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -205,11 +211,24 @@ export default function ApplyLeaveScreen() {
               <Text style={[styles.dateLabel, { color: C.gray600 }]}>Start Date</Text>
               <Text style={[styles.dateValue, { color: C.gray900 }]}>{formatDate(startDate)}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.dateItem, { backgroundColor: C.gray50, borderColor: C.gray100 }]} onPress={() => openPicker('end')}>
-              <Text style={[styles.dateLabel, { color: C.gray600 }]}>End Date</Text>
-              <Text style={[styles.dateValue, { color: C.gray900 }]}>{formatDate(endDate)}</Text>
-            </TouchableOpacity>
+            {!isHalfDay && (
+              <TouchableOpacity style={[styles.dateItem, { backgroundColor: C.gray50, borderColor: C.gray100 }]} onPress={() => openPicker('end')}>
+                <Text style={[styles.dateLabel, { color: C.gray600 }]}>End Date</Text>
+                <Text style={[styles.dateValue, { color: C.gray900 }]}>{formatDate(endDate)}</Text>
+              </TouchableOpacity>
+            )}
           </View>
+
+          <TouchableOpacity 
+            style={[styles.halfDayToggle, { backgroundColor: isHalfDay ? C.primary + '10' : C.gray50, borderColor: isHalfDay ? C.primary : C.gray100 }]}
+            onPress={() => setIsHalfDay(!isHalfDay)}
+          >
+            <View style={styles.halfDayLeft}>
+               <View style={[styles.toggleCircle, { backgroundColor: isHalfDay ? C.primary : C.gray400 }]} />
+               <Text style={[styles.halfDayText, { color: isHalfDay ? C.primary : C.gray900 }]}>Apply for Half Day</Text>
+            </View>
+            {isHalfDay && <IconSymbol name="checkmark.circle.fill" size={20} color={C.primary} />}
+          </TouchableOpacity>
         </View>
 
         <View style={[styles.card, { backgroundColor: C.card }]}>
@@ -238,6 +257,27 @@ export default function ApplyLeaveScreen() {
               onChangeText={setReason}
             />
           </View>
+        </View>
+
+        <View style={[styles.card, { backgroundColor: C.card }]}>
+          <View style={styles.sectionTitleRow}>
+            <IconSymbol name="envelope.fill" size={16} color={C.primary} />
+            <Text style={[styles.sectionTitle, { color: C.gray900 }]}>Mailing To</Text>
+          </View>
+
+          <TouchableOpacity 
+            style={[styles.typeSelect, { backgroundColor: C.gray50, borderColor: C.gray100, marginBottom: 0 }]} 
+            onPress={() => {
+              setPickerType('mailing');
+              setPickerVisible(true);
+            }}
+          >
+            <View>
+              <Text style={[styles.dateLabel, { color: C.gray600 }]}>Approver / Recipient</Text>
+              <Text style={[styles.dateValue, { color: C.gray900 }]}>{mailingTo === 'Select Person' ? 'Add Approver Name' : mailingTo}</Text>
+            </View>
+            <IconSymbol name="person.crop.circle.badge.plus" size={20} color={C.primary} />
+          </TouchableOpacity>
         </View>
 
         <TouchableOpacity
@@ -307,25 +347,50 @@ export default function ApplyLeaveScreen() {
         <Pressable style={styles.modalOverlay} onPress={() => setPickerVisible(false)}>
           <View style={[styles.pickerContainer, { backgroundColor: C.white }]}>
             <View style={styles.pickerHeader}>
-              <Text style={[styles.pickerTitle, { color: C.gray900 }]}>Select Leave Type</Text>
+              <Text style={[styles.pickerTitle, { color: C.gray900 }]}>
+                {pickerType === 'type' ? 'Select Leave Type' : 'Add Approver Name'}
+              </Text>
             </View>
 
-            <FlatList
-              data={LEAVE_TYPES}
-              keyExtractor={(item) => item.label}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.typeItem}
-                  onPress={() => handleSelectType(item.label)}
+            {pickerType === 'type' ? (
+              <FlatList
+                data={LEAVE_TYPES}
+                keyExtractor={(item) => item.label}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={styles.typeItem}
+                    onPress={() => handleSelectType(item.label)}
+                  >
+                    <View style={[styles.typeIcon, { backgroundColor: item.color + '20' }]}>
+                      <IconSymbol name={item.icon as any} size={20} color={item.color} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.typeLabel, { color: C.gray900 }]}>{item.label}</Text>
+                    </View>
+                    {leaveType === item.label && (
+                      <IconSymbol name="checkmark" size={20} color={C.primary} />
+                    )}
+                  </TouchableOpacity>
+                )}
+              />
+            ) : (
+              <View style={{ padding: 20 }}>
+                <TextInput
+                  style={[styles.textArea, { height: 50, backgroundColor: C.gray50, borderColor: C.gray100, color: C.gray900, marginBottom: 20 }]}
+                  placeholder="Enter approver name..."
+                  placeholderTextColor={C.gray400}
+                  value={mailingTo === 'Select Person' ? '' : mailingTo}
+                  onChangeText={setMailingTo}
+                  autoFocus
+                />
+                <TouchableOpacity 
+                  style={[styles.submitBtn, { marginHorizontal: 0, height: 50, borderRadius: 12 }]}
+                  onPress={() => setPickerVisible(false)}
                 >
-                  <View style={[styles.typeIcon, { backgroundColor: item.color + '20' }]}>
-                    <IconSymbol name={item.icon as any} size={20} color={item.color} />
-                  </View>
-                  <Text style={[styles.typeLabel, { color: C.gray900 }]}>{item.label}</Text>
-                  {leaveType === item.label && <IconSymbol name="checkmark" size={20} color={C.primary} />}
+                  <Text style={styles.submitBtnText}>Done</Text>
                 </TouchableOpacity>
-              )}
-            />
+              </View>
+            )}
           </View>
         </Pressable>
       </Modal>
@@ -352,6 +417,10 @@ const styles = StyleSheet.create({
   inputGroup: { gap: 8 },
   inputLabel: { fontSize: 12, fontWeight: '700' },
   textArea: { borderRadius: 16, borderWidth: 1, padding: 15, fontSize: 14, fontWeight: '600', height: 100, textAlignVertical: 'top' },
+  halfDayToggle: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 15, borderRadius: 16, borderWidth: 1, marginTop: 15 },
+  halfDayLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  toggleCircle: { width: 10, height: 10, borderRadius: 5 },
+  halfDayText: { fontSize: 14, fontWeight: '700' },
   submitBtn: { backgroundColor: '#4361EE', marginHorizontal: '5%', marginVertical: 20, height: 60, borderRadius: 20, alignItems: 'center', justifyContent: 'center', elevation: 4 },
   submitBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800' },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 },

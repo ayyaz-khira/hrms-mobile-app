@@ -23,19 +23,21 @@ const { width } = Dimensions.get('window');
 
 export default function HomeScreen() {
   const { isDarkMode } = useTheme();
-  
+
   const C = {
     primary: '#4361EE',
-    dark: isDarkMode ? '#000000' : '#1B1B2F',
-    white: isDarkMode ? '#1E293B' : '#FFFFFF',
-    gray50: isDarkMode ? '#334155' : '#F8F9FA',
-    gray100: isDarkMode ? '#1E293B' : '#F1F3F5',
-    gray200: isDarkMode ? '#334155' : '#E9ECEF',
-    gray400: isDarkMode ? '#64748B' : '#CED4DA',
+    dark: isDarkMode ? '#050505' : '#1B1B2F',
+    white: isDarkMode ? '#161B22' : '#FFFFFF',
+    gray50: isDarkMode ? '#1F2937' : '#F8F9FA',
+    gray100: isDarkMode ? '#161B22' : '#F1F3F5',
+    gray200: isDarkMode ? '#1F2937' : '#E9ECEF',
+    gray400: isDarkMode ? '#4B5563' : '#CED4DA',
     gray600: isDarkMode ? '#94A3B8' : '#868E96',
     gray900: isDarkMode ? '#F8F9FB' : '#212529',
-    success: '#4CAF50',
-    bg: isDarkMode ? '#0F172A' : '#F8F9FB',
+    success: '#10B981',
+    danger: '#EF4444',
+    warning: '#F59E0B',
+    bg: isDarkMode ? '#0B0E14' : '#F8F9FB',
   };
 
   const [userName, setUserName] = useState('Harsh');
@@ -52,135 +54,214 @@ export default function HomeScreen() {
   const [isPunching, setIsPunching] = useState(false);
   const [lastCheckInRaw, setLastCheckInRaw] = useState<Date | null>(null);
   const [recentHistory, setRecentHistory] = useState<any[]>([]);
+  const [allAttendance, setAllAttendance] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  // ====================== SMART AUTH SYSTEM ======================
+  const getAuthHeader = async (): Promise<string | null> => {
+    const rawToken = await AsyncStorage.getItem('user_token');
+    if (!rawToken) return null;
+
+    const token = rawToken.trim();
+    
+    // 1. If it already has a prefix, use it as is
+    if (token.toLowerCase().startsWith('token ') || token.toLowerCase().startsWith('bearer ')) {
+      return token;
+    }
+
+    // 2. If it has a colon, it's an API Key -> use 'token'
+    if (token.includes(':')) {
+      return `token ${token}`;
+    } 
+    
+    // 3. If it's a single hash, send it RAW (no prefix). This is required for session-based tokens.
+    return token;
+  };
+
+  // ====================== LOAD DASHBOARD ======================
+  useFocusEffect(
+    useCallback(() => {
+      loadDashboardData();
+      
+      // Heartbeat to keep session alive (every 1 minute)
+      const heartbeat = setInterval(async () => {
+        const authHeader = await getAuthHeader();
+        const userId = await AsyncStorage.getItem('user_id');
+        if (authHeader && userId) {
+          fetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_employee_details', {
+        credentials: 'include',
+            method: 'POST',
+            headers: { 
+              'Authorization': authHeader, 
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest' 
+            },
+            body: JSON.stringify({ employee: userId.trim() })
+          }).catch(() => {});
+        }
+      }, 60000);
+
+      return () => clearInterval(heartbeat);
+    }, [])
+  );
+
+  const loadDashboardData = async () => {
+    setLoading(true);
+    try {
+      const savedName = await AsyncStorage.getItem('user_name');
+      if (savedName) setUserName(savedName);
+
+      const userId = await AsyncStorage.getItem('user_id');
+      const authHeader = await getAuthHeader();
+
+      if (!authHeader || !userId) {
+        console.error("❌ Missing token or userId");
+        return;
+      }
+
+      const commonHeaders: any = {
+        Authorization: authHeader,
+        sid: !authHeader.toLowerCase().includes("token") ? authHeader : undefined,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+      };
+
+      // Fetch Attendance Summary for current month stats
+      const now = new Date();
+      const firstDay = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+      const lastDay = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()}`;
+      
+      const attendResponse = await fetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_attendance', {
+        credentials: 'include',
+        method: 'POST',
+        headers: commonHeaders,
+        body: JSON.stringify({ employee: userId.trim(), from_date: firstDay, to_date: lastDay })
+      });
+
+      let presentCount = 0;
+      if (attendResponse.ok) {
+        const attendResult = await attendResponse.json();
+        const attendData = attendResult.message?.data || [];
+        setAllAttendance(attendData);
+        const presentDates = new Set();
+        attendData.forEach((l: any) => {
+          if (l.status === 'Present' || l.status === 'Half Day' || (l.in_time && l.in_time !== '--:--')) {
+            presentDates.add(l.attendance_date);
+          }
+        });
+        presentCount = presentDates.size;
+      }
+
+      const response = await fetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_employee_checkins', {
+        credentials: 'include',
+        method: 'POST',
+        headers: commonHeaders,
+        body: JSON.stringify({ employee: userId.trim() })
+      });
+
+      if (response.status === 417 || response.status === 401) {
+        console.warn("⚠️ Session expired (417/401). Redirecting to login...");
+        await AsyncStorage.multiRemove(['user_token', 'user_id', 'employee_details']);
+        router.replace('/');
+        return;
+      }
+
+      if (!response.ok) return;
+
+      const result = await response.json();
+      
+      const extractLogs = (res: any): any[] => {
+        if (!res) return [];
+        if (Array.isArray(res)) return res;
+        if (Array.isArray(res.message)) return res.message;
+        if (res.message?.data && Array.isArray(res.message.data)) return res.message.data;
+        if (res.message?.logs && Array.isArray(res.message.logs)) return res.message.logs;
+        if (res.data && Array.isArray(res.data)) return res.data;
+        return [];
+      };
+
+      const logs = extractLogs(result);
+
+      if (logs.length > 0) {
+        const map = new Map();
+        logs.forEach((l: any) => {
+          if (!l.time) return;
+          const d = new Date(l.time);
+          const dateKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          
+          if (!map.has(dateKey)) {
+            map.set(dateKey, { 
+              dateKey, 
+              date: d.toLocaleDateString([], { day: '2-digit', month: 'short' }), 
+              in: null, 
+              out: null, 
+              inRaw: null, 
+              outRaw: null 
+            });
+          }
+
+          const entry = map.get(dateKey);
+          const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          const type = (l.log_type || '').toString().toUpperCase();
+
+          if (type === 'IN' || !entry.inRaw || d < entry.inRaw) {
+            if (entry.inRaw && d < entry.inRaw && !entry.outRaw) {
+              entry.out = entry.in;
+              entry.outRaw = entry.inRaw;
+            }
+            entry.in = timeStr;
+            entry.inRaw = d;
+          }
+
+          if (type === 'OUT' || !entry.outRaw || d > entry.outRaw) {
+            if (d > entry.inRaw) {
+              entry.out = timeStr;
+              entry.outRaw = d;
+            }
+          }
+        });
+
+        const grouped = Array.from(map.values()).sort((a, b) => b.dateKey.localeCompare(a.dateKey));
+
+        setRecentHistory(grouped.slice(0, 3));
+        const now = new Date();
+        const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const todayEntry = grouped.find(g => g.dateKey === today);
+
+        if (todayEntry) {
+          setDashboardData(prev => ({ ...prev, checkIn: todayEntry.in || '--:--', checkOut: todayEntry.out || '--:--', presentDays: presentCount }));
+          const isIn = !!todayEntry.in && !todayEntry.out;
+          setIsCheckedIn(isIn);
+          setLastCheckInRaw(isIn && todayEntry.inRaw ? todayEntry.inRaw : null);
+        } else {
+          setIsCheckedIn(false);
+          setLastCheckInRaw(null);
+          setDashboardData(prev => ({ ...prev, checkIn: '--:--', checkOut: '--:--', workedHours: '00:00:00', presentDays: presentCount }));
+        }
+      }
+
+      // Employee Details
+      const detailsRes = await fetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_employee_details', {
+        credentials: 'include',
+        method: 'POST',
+        headers: commonHeaders,
+        body: JSON.stringify({ employee: userId.trim() })
+      });
+      if (detailsRes.ok) {
+        const detailsData = await detailsRes.json();
+        if (detailsData.message?.employee_name) setUserName(detailsData.message.employee_name);
+      }
+    } catch (e) {
+      console.error("❌ Dashboard Load Error:", e);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useFocusEffect(
     useCallback(() => {
-      const loadDashboard = async () => {
-        try {
-          const savedName = await AsyncStorage.getItem('user_name');
-          if (savedName) setUserName(savedName);
-
-          let token = await AsyncStorage.getItem('user_token');
-          const userId = await AsyncStorage.getItem('user_id');
-
-          // Auto-fix legacy tokens
-          if (token && !token.startsWith('token ') && token.includes(':')) {
-            token = `token ${token}`;
-            await AsyncStorage.setItem('user_token', token);
-          }
-          const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'https://staging.microcrispr.com/api/method/hrms_application.api.mobile_login';
-          const baseApi = apiUrl.split('/api/')[0];
-          
-          // Background fetch employee details to cache them
-          fetch(`${baseApi}/api/method/hrms_application.api.get_employee_details`, {
-            method: 'POST',
-            headers: {
-              'Authorization': token || '',
-              'Content-Type': 'application/json',
-              'Accept': 'application/json',
-            },
-            body: JSON.stringify({ employee: userId })
-          }).then(res => res.json()).then(async (result) => {
-            if (result.message) {
-              await AsyncStorage.setItem('employee_details', JSON.stringify(result.message));
-              if (result.message.employee_name) setUserName(result.message.employee_name);
-            }
-          }).catch(err => console.error('BG Fetch Error:', err));
-
-          // Load Dashboard
-          try {
-            const response = await fetch(`${baseApi}/api/method/hrms_application.api.get_employee_checkins`, {
-              method: 'POST',
-              headers: {
-                'Authorization': token || '',
-                'Content-Type': 'application/json',
-                'Accept': 'application/json',
-              },
-              body: JSON.stringify({ employee: userId })
-            });
-
-            if (!response.ok) {
-              // Fail silently in background
-              return;
-            }
-
-            const data = await response.json();
-              const logs = data.message || [];
-              
-              if (logs.length > 0) {
-                // Latest status
-                const latest = logs[0];
-                setIsCheckedIn(latest.log_type === 'IN');
-                
-                // Grouping for dashboard display
-                const grouped = logs.reduce((acc: any[], log: any) => {
-                  if (!log.time) return acc;
-                  const d = new Date(log.time);
-                  const dateKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-                  
-                  let dayEntry = acc.find(item => item.dateKey === dateKey);
-                  if (!dayEntry) {
-                    dayEntry = { 
-                      dateKey, 
-                      date: d.toLocaleDateString([], { day: '2-digit', month: 'short' }),
-                      in: null, 
-                      out: null,
-                      inRaw: null,
-                      outRaw: null
-                    };
-                    acc.push(dayEntry);
-                  }
-                  const logTime = new Date(log.time);
-                  const timeStr = logTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                  const type = log.log_type?.toUpperCase();
-                  
-                  if (type === 'IN') {
-                    if (!dayEntry.inRaw || logTime < dayEntry.inRaw) {
-                      dayEntry.in = timeStr;
-                      dayEntry.inRaw = logTime;
-                    }
-                  } else if (type === 'OUT') {
-                    if (!dayEntry.outRaw || logTime > dayEntry.outRaw) {
-                      dayEntry.out = timeStr;
-                      dayEntry.outRaw = logTime;
-                    }
-                  }
-                  return acc;
-                }, []);
-                
-                setRecentHistory(grouped.slice(0, 5));
-
-                const now = new Date();
-                const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-                const todayEntry = grouped.find(g => g.dateKey === today);
-                
-                if (todayEntry) {
-                  setDashboardData(prev => ({
-                    ...prev,
-                    checkIn: todayEntry.in || '--:--',
-                    checkOut: todayEntry.out || '--:--'
-                  }));
-                  const isCurrentlyIn = !!todayEntry.in && !todayEntry.out;
-                  setIsCheckedIn(isCurrentlyIn);
-                  if (isCurrentlyIn && todayEntry.inRaw) {
-                    setLastCheckInRaw(new Date(todayEntry.inRaw));
-                  } else {
-                    setLastCheckInRaw(null);
-                  }
-                } else {
-                  setIsCheckedIn(false);
-                  setLastCheckInRaw(null);
-                  setDashboardData(prev => ({ ...prev, checkIn: '--:--', checkOut: '--:--', workedHours: '00:00:00' }));
-                }
-              }
-          } catch (e) {
-            console.error('Failed to load dashboard logs', e);
-          }
-        } catch (e) {
-          console.error('Failed to load dashboard', e);
-        }
-      };
-      loadDashboard();
+      loadDashboardData();
     }, [])
   );
 
@@ -206,21 +287,26 @@ export default function HomeScreen() {
   const handlePunch = async () => {
     setIsPunching(true);
     try {
-      const token = await AsyncStorage.getItem('user_token');
+      const authHeader = await getAuthHeader();
       const userId = await AsyncStorage.getItem('user_id');
-      
+
+      if (!authHeader || !userId) {
+        Alert.alert('Error', 'Authentication failed. Please login again.');
+        return;
+      }
+
       const punchType = isCheckedIn ? 'OUT' : 'IN';
-      const apiUrl = 'https://staging.microcrispr.com/api/method/hrms_application.api.employee_checkin';
-      
-      const response = await fetch(apiUrl, {
+
+      const response = await fetch('https://staging.microcrispr.com/api/method/hrms_application.api.employee_checkin', {
+        credentials: 'include',
         method: 'POST',
         headers: {
-          'Authorization': token || '',
+          'Authorization': authHeader,
           'Content-Type': 'application/json',
           'Accept': 'application/json'
         },
         body: JSON.stringify({
-          employee: userId,
+          employee: userId.trim(),
           log_type: punchType,
           timestamp: new Date().toISOString(),
           location: 'Mobile Dashboard'
@@ -232,28 +318,82 @@ export default function HomeScreen() {
         const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         setDashboardData(prev => ({
           ...prev,
-          [punchType === 'IN' ? 'checkIn' : 'checkOut']: now
+          presentDays: presentCount,
+          checkIn: earliest ? earliest.time : '--:--',
+          checkOut: latest ? latest.time : '--:--',
+          workedHours: workedStr
         }));
         Alert.alert('Success', `Successfully punched ${punchType.toLowerCase()} at ${now}`);
+        setTimeout(loadDashboardData, 1000);
       } else {
-        const res = await response.json();
+        const res = await response.json().catch(() => ({}));
         Alert.alert('Error', res.message || 'Failed to record attendance');
       }
     } catch (e) {
+      console.error(e);
       Alert.alert('Error', 'Could not connect to server');
     } finally {
       setIsPunching(false);
     }
   };
 
-  const presentDays = [1, 2, 3, 4, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 21, 22, 23, 24, 25, 28, 29, 30];
-  const absentDays: number[] = []; 
-  const leaveDays = [6, 13, 20, 27];
+  const getLogForDay = (day: number) => {
+    const dateStr = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    return allAttendance.find(l => l.attendance_date === dateStr);
+  };
+
+  const cleanTime = (raw: string | null | undefined) => {
+    if (!raw || raw === '--:--' || raw === '-') return '-';
+    // If it's "2026-05-13 09:00:00", extract "09:00"
+    if (raw.includes(' ')) {
+      const timePart = raw.split(' ')[1];
+      return timePart.substring(0, 5);
+    }
+    return raw.substring(0, 5);
+  };
+
+  const calculateHours = (inT: string | null | undefined, outT: string | null | undefined) => {
+    if (!inT || !outT || inT === '-' || outT === '-') return '-';
+    
+    const parseTime = (timeStr: string) => {
+       // Expecting "HH:mm"
+       let [h, m] = timeStr.split(':').map(Number);
+       return { h, m };
+    };
+
+    try {
+       const start = parseTime(inT);
+       const end = parseTime(outT);
+       
+       let diffMins = (end.h * 60 + end.m) - (start.h * 60 + start.m);
+       if (diffMins < 0) return '-';
+
+       const hrs = Math.floor(diffMins / 60);
+       const mins = diffMins % 60;
+       return `${hrs.toString().padStart(2, '0')}h ${mins.toString().padStart(2, '0')}m`;
+    } catch (e) {
+       return '-';
+    }
+  };
 
   const getDayDetails = (day: number) => {
-    if (presentDays.includes(day)) return { checkIn: '09:30 AM', checkOut: '06:30 PM', workingHours: '09h 00m', shift: 'Day Shift' };
-    if (leaveDays.includes(day)) return { checkIn: '-', checkOut: '-', workingHours: '-', shift: '-' };
-    return { checkIn: 'N/A', checkOut: 'N/A', workingHours: 'N/A', shift: 'N/A' };
+    const log = getLogForDay(day);
+    if (log) {
+       const inTime = cleanTime(log.in_time);
+       const outTime = cleanTime(log.out_time);
+       const workingHours = log.total_working_hours && log.total_working_hours !== '--:--' && log.total_working_hours !== '-'
+          ? log.total_working_hours 
+          : calculateHours(inTime, outTime);
+
+       return { 
+          checkIn: inTime, 
+          checkOut: outTime, 
+          workingHours: workingHours, 
+          shift: log.shift || 'G Shift',
+          status: log.status
+       };
+    }
+    return { checkIn: '-', checkOut: '-', workingHours: '-', shift: '-', status: 'Absent' };
   };
 
   const styles = StyleSheet.create({
@@ -315,10 +455,6 @@ export default function HomeScreen() {
     colon: { fontSize: 18, fontWeight: '800', color: C.primary, marginTop: -15, paddingHorizontal: 2 },
     dashboardDivider: { height: 1, backgroundColor: C.gray100, marginHorizontal: -16, marginBottom: 12 },
     checkInOutRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 0, width: '100%' },
-    checkCol: { alignItems: 'center', flex: 1 },
-    checkStatus: { fontSize: 11, fontWeight: '800', marginBottom: 1 },
-    checkDate: { fontSize: 9, fontWeight: '600', color: C.gray400 },
-    checkTime: { fontSize: 12, fontWeight: '800', color: C.gray900 },
     statsRow: { flexDirection: 'row', gap: 15, marginBottom: 25 },
     statCard: {
       flex: 1,
@@ -342,8 +478,6 @@ export default function HomeScreen() {
     actionItem: { alignItems: 'center', width: '23%', marginBottom: 15 },
     actionIconBg: { width: 48, height: 48, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
     actionLabel: { fontSize: 9, fontWeight: '700', color: C.gray900, textAlign: 'center' },
-    announcementsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    seeAllText: { fontSize: 12, color: '#3F51B5', fontWeight: '600', marginBottom: 15 },
     announcementList: {
       backgroundColor: C.white,
       borderRadius: 20,
@@ -383,8 +517,6 @@ export default function HomeScreen() {
     detailItem: { width: '47%', backgroundColor: C.gray50, padding: 12, borderRadius: 16, flexDirection: 'row', alignItems: 'center', gap: 10 },
     detailLabel: { fontSize: 9, color: C.gray600, fontWeight: '700', textTransform: 'uppercase', marginBottom: 2 },
     detailValue: { fontSize: 13, fontWeight: '800', color: C.gray900 },
-    statusBanner: { marginTop: 15, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, alignItems: 'center' },
-    statusBannerText: { fontSize: 12, fontWeight: '800' },
     sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 25, marginBottom: 15 },
     viewAllText: { fontSize: 12, color: C.primary, fontWeight: '600' },
     attendanceCard: { backgroundColor: C.white, borderRadius: 20, padding: 15, elevation: 3 },
@@ -398,18 +530,6 @@ export default function HomeScreen() {
     statusBadgeSmall: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, minWidth: 70, alignItems: 'center' },
     statusTextSmall: { fontSize: 10, fontWeight: '800' },
     divider: { height: 1, backgroundColor: C.gray100, marginHorizontal: 0 },
-    punchActionBtn: {
-      width: 50,
-      height: 50,
-      borderRadius: 25,
-      alignItems: 'center',
-      justifyContent: 'center',
-      elevation: 5,
-      shadowColor: '#000',
-      shadowOpacity: 0.1,
-      shadowRadius: 5,
-      marginTop: -5,
-    }
   });
 
   const AttendanceRow = ({ date, checkIn, checkOut, status, color }: any) => (
@@ -462,13 +582,12 @@ export default function HomeScreen() {
             <Text style={styles.greetingText}>Good morning</Text>
             <Text style={styles.userName}>{userName}</Text>
           </View>
-          <TouchableOpacity style={styles.profileBadge}>
+          <TouchableOpacity style={styles.profileBadge} onPress={() => router.push("/profile")}>
             <Text style={styles.profileBadgeText}>{userName.charAt(0).toUpperCase()}</Text>
           </TouchableOpacity>
         </View>
 
         <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-          {/* Dashboard Header */}
           <View style={styles.dashboardHeader}>
             <Text style={styles.dashboardTitle}>Dashboard</Text>
           </View>
@@ -482,7 +601,7 @@ export default function HomeScreen() {
                   <Text style={styles.historyBtnText}>History</Text>
                 </TouchableOpacity>
               </View>
-              
+
               <View style={styles.clockRow}>
                 <View style={styles.digitGroup}>
                   <View style={styles.digitPair}>
@@ -491,9 +610,9 @@ export default function HomeScreen() {
                   </View>
                   <Text style={styles.digitSub}>HOURS</Text>
                 </View>
-                
+
                 <Text style={styles.colon}>:</Text>
-                
+
                 <View style={styles.digitGroup}>
                   <View style={styles.digitPair}>
                     <View style={styles.digitBox}><Text style={styles.digitText}>{(dashboardData.workedHours.split(':')[1] || '00')[0] || '0'}</Text></View>
@@ -503,7 +622,7 @@ export default function HomeScreen() {
                 </View>
 
                 <Text style={styles.colon}>:</Text>
-                
+
                 <View style={styles.digitGroup}>
                   <View style={styles.digitPair}>
                     <View style={styles.digitBox}><Text style={styles.digitText}>{(dashboardData.workedHours.split(':')[2] || '00')[0] || '0'}</Text></View>
@@ -522,7 +641,7 @@ export default function HomeScreen() {
                 <Text style={{ fontSize: 10, color: C.gray600, fontWeight: '600' }}>{new Date().toLocaleDateString([], { day: '2-digit', month: '2-digit', year: 'numeric' })}</Text>
                 <Text style={{ fontSize: 13, fontWeight: '800', color: C.gray900 }}>{dashboardData.checkIn || '--:--'}</Text>
               </View>
-              
+
               <IconSymbol name="arrow.right" size={16} color={C.gray200} />
 
               <View style={{ alignItems: 'flex-end' }}>
@@ -544,7 +663,7 @@ export default function HomeScreen() {
                 <Text style={styles.statLabel}>Present days</Text>
               </View>
             </TouchableOpacity>
-            
+
             <TouchableOpacity style={styles.statCard} onPress={() => router.push('/leave')}>
               <View style={[styles.statIconContainer, { backgroundColor: isDarkMode ? '#1E293B' : '#E8F5E9' }]}>
                 <IconSymbol name="location.fill" size={20} color={C.success} />
@@ -583,12 +702,12 @@ export default function HomeScreen() {
             {recentHistory.length > 0 ? (
               recentHistory.map((day, i) => (
                 <React.Fragment key={day.dateKey}>
-                  <AttendanceRow 
-                    date={day.date} 
-                    checkIn={day.in || '--:--'} 
-                    checkOut={day.out || '--:--'} 
-                    status={day.out ? "Present" : "In Office"} 
-                    color={day.out ? C.success : C.primary} 
+                  <AttendanceRow
+                    date={day.date}
+                    checkIn={day.in || '--:--'}
+                    checkOut={day.out || '--:--'}
+                    status={day.out ? "Present" : "In Office"}
+                    color={day.out ? C.success : C.primary}
                   />
                   {i < recentHistory.length - 1 && <View style={styles.divider} />}
                 </React.Fragment>
@@ -604,7 +723,7 @@ export default function HomeScreen() {
           <View style={[styles.sectionHeader, { marginTop: 25 }]}>
             <Text style={styles.sectionTitle}>Announcements</Text>
             <TouchableOpacity>
-              <Text style={styles.seeAllText}>See all</Text>
+              <Text style={styles.viewAllText}>See all</Text>
             </TouchableOpacity>
           </View>
           <View style={styles.announcementList}>
@@ -629,18 +748,23 @@ export default function HomeScreen() {
                 {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d, i) => <Text key={i} style={styles.weekDayText}>{d}</Text>)}
               </View>
               <View style={styles.calendarGrid}>
-                {/* April 2026 starts on Wednesday - Add 2 empty boxes for Mon, Tue */}
-                {[null, null].map((_, i) => (
-                  <View key={`empty-${i}`} style={styles.dayBox} />
-                ))}
-                {Array.from({ length: 30 }, (_, i) => i + 1).map(day => {
-                  const isPresent = presentDays.includes(day);
-                  const isLeave = leaveDays.includes(day);
+                {Array.from({ length: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate() }, (_, i) => i + 1).map(day => {
+                  const log = getLogForDay(day);
+                  const isPresent = log && (log.status === 'Present' || log.status === 'Half Day' || (log.in_time && log.in_time !== '--:--'));
+                  const isLeave = log && (log.status === 'On Leave' || log.status === 'Leave');
+                  const isAbsent = log && log.status === 'Absent';
                   const isSelected = selectedDay === day;
+                  
                   return (
                     <TouchableOpacity key={day} style={styles.dayBox} onPress={() => setSelectedDay(day)}>
-                      <View style={[styles.dayCircle, isPresent && styles.presentBox, isLeave && styles.leaveBox, isSelected && styles.selectedDayCircle]}>
-                        <Text style={[styles.dayText, (isPresent || isLeave || isSelected) && styles.whiteText]}>{day}</Text>
+                      <View style={[
+                        styles.dayCircle, 
+                        isPresent && styles.presentBox, 
+                        isLeave && styles.leaveBox, 
+                        isAbsent && styles.absentBox,
+                        isSelected && styles.selectedDayCircle
+                      ]}>
+                        <Text style={[styles.dayText, (isPresent || isLeave || isAbsent || isSelected) && styles.whiteText]}>{day}</Text>
                       </View>
                     </TouchableOpacity>
                   );

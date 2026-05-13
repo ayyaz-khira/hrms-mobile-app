@@ -19,7 +19,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../context/ThemeContext';
 
 const GET_CHECKINS_API = 'https://staging.microcrispr.com/api/method/hrms_application.api.get_employee_checkins';
-const PUNCH_API = 'https://staging.microcrispr.com/api/method/hrms_application.api.employee_checkin';
 
 export default function CheckInScreen() {
   const { isDarkMode } = useTheme();
@@ -79,13 +78,17 @@ export default function CheckInScreen() {
       if (!token || !userId) return;
 
       const response = await fetch(GET_CHECKINS_API, {
+        credentials: 'include',
         method: 'POST',
         headers: {
           Authorization: token || '',
           'Content-Type': 'application/json',
           Accept: 'application/json',
         },
-        body: JSON.stringify({ employee: userId }),
+        body: JSON.stringify({ 
+          employee: userId,
+          limit_page_length: 200 // Increased limit to see more history
+        }),
       });
 
       if (!response.ok) {
@@ -117,18 +120,21 @@ export default function CheckInScreen() {
 
         for (const log of todayLogs) {
           const type = getLogType(log);
-          const hour = new Date(log.time).getHours();
+          const d = new Date(log.time);
+          const hour = d.getHours();
 
-          if (type === 'IN' && !earliestIn) {
-            earliestIn = log;
+          if (type === 'IN') {
+            if (!earliestIn || d < new Date(earliestIn.time)) earliestIn = log;
+          } else if (type === 'OUT') {
+            if (!latestOut || d > new Date(latestOut.time)) latestOut = log;
+          } else {
+            // Fallback logic if no explicit type
+            if (hour < 12) {
+              if (!earliestIn || d < new Date(earliestIn.time)) earliestIn = log;
+            } else {
+              if (!latestOut || d > new Date(latestOut.time)) latestOut = log;
+            }
           }
-          if (type === 'OUT') {
-            latestOut = log; // keep updating for latest
-          }
-
-          // Fallback logic if no explicit type
-          if (!earliestIn && hour < 12) earliestIn = log; // AM log
-          if (!latestOut && hour >= 12) latestOut = log; // PM log
         }
 
         if (earliestIn) {
@@ -183,72 +189,40 @@ export default function CheckInScreen() {
           weekday: d.toLocaleDateString([], { weekday: 'short' }),
           in: null,
           out: null,
+          inRaw: null,
+          outRaw: null,
         });
       }
 
       const entry = map.get(key);
       const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      const hour = d.getHours();
       const type = getLogType(log);
 
-      if (type === 'IN' || (hour < 13 && !entry.in)) {
-        entry.in = timeStr;
-      } else if (type === 'OUT' || (hour >= 12 && !entry.out)) {
-        entry.out = timeStr;
+      // Earliest log of the day is IN (unless explicit type says otherwise)
+      if (type === 'IN' || !entry.inRaw || d < entry.inRaw) {
+        if (type === 'IN' || !entry.inRaw || d < entry.inRaw) {
+           // If we already have an IN but this one is earlier, move the old IN to OUT if OUT is empty
+           if (entry.inRaw && d < entry.inRaw && !entry.outRaw) {
+              entry.out = entry.in;
+              entry.outRaw = entry.inRaw;
+           }
+           entry.in = timeStr;
+           entry.inRaw = d;
+        }
+      }
+      
+      // Latest log of the day is OUT (unless it's the only log and looks like an IN)
+      if (type === 'OUT' || !entry.outRaw || d > entry.outRaw) {
+         if (d > entry.inRaw) {
+            entry.out = timeStr;
+            entry.outRaw = d;
+         }
       }
     });
 
     return Array.from(map.values()).sort((a, b) => b.dateKey.localeCompare(a.dateKey));
   };
 
-  const handlePunch = async () => {
-    setLoading(true);
-    try {
-      const token = await AsyncStorage.getItem('user_token');
-      const userId = await AsyncStorage.getItem('user_id');
-
-      if (!token || !userId) {
-        Alert.alert('Session Expired', 'Please login again');
-        router.replace('/login' as any);
-        return;
-      }
-
-      const punchType = isCheckedIn ? 'OUT' : 'IN';
-
-      const response = await fetch(PUNCH_API, {
-        method: 'POST',
-        headers: {
-          Authorization: token,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({
-          employee: userId,
-          log_type: punchType,
-          timestamp: new Date().toISOString(),
-          location: locationName,
-        }),
-      });
-
-      if (response.ok) {
-        Alert.alert('Success', `Successfully punched ${punchType}`);
-        await fetchTodayLogs();
-      } else {
-        const res = await response.json().catch(() => ({}));
-        if (response.status === 417) {
-          Alert.alert('Status Conflict', `Server says you are already punched ${punchType === 'IN' ? 'IN' : 'OUT'}. Please refresh.`);
-          await fetchTodayLogs(); // Sync state
-        } else {
-          Alert.alert('Punch Failed', res?.message || 'Failed');
-        }
-      }
-    } catch (error) {
-      console.error('Punch Error:', error);
-      Alert.alert('Error', 'Failed to communicate with server');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const onRefresh = () => fetchTodayLogs(true);
 
@@ -347,6 +321,17 @@ export default function CheckInScreen() {
     historyTypeTag: { fontSize: 11, fontWeight: '900', width: 30 },
     historyTimeValue: { fontSize: 14, fontWeight: '700' },
     emptyState: { padding: 40, borderRadius: 24, alignItems: 'center' },
+    staticCard: { borderRadius: 30, overflow: 'hidden', elevation: 2, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 10 },
+    staticTimerBox: { elevation: 2, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 5 },
+    statusTable: { borderRadius: 24, overflow: 'hidden', elevation: 4, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
+    tableHeader: { padding: 18, borderBottomWidth: 1, borderBottomColor: 'rgba(0,0,0,0.05)', backgroundColor: 'rgba(67, 97, 238, 0.05)' },
+    tableHeaderText: { fontSize: 16, fontWeight: '800', textAlign: 'center' },
+    tableBody: { padding: 5 },
+    tableRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 18 },
+    tableLabel: { fontSize: 14, fontWeight: '700' },
+    tableValue: { fontSize: 15, fontWeight: '800' },
+    hoursBadge: { backgroundColor: '#4361EE', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10 },
+    hoursText: { color: '#FFFFFF', fontSize: 14, fontWeight: '900' },
   });
 
   return (
@@ -389,88 +374,53 @@ export default function CheckInScreen() {
           </View>
         </View>
 
-        {/* Punch Button */}
+        {/* Today's Activity (Read Only) */}
         <View style={styles.punchContainer}>
-          <TouchableOpacity
-            style={[
-              styles.punchButton,
-              {
-                backgroundColor: isCheckedIn ? C.card : C.primary,
-                height: isCheckedIn ? 220 : 100,
-                borderWidth: isCheckedIn ? 1 : 0,
-                borderColor: isDarkMode ? '#334155' : '#E9ECEF',
-                padding: isCheckedIn ? 20 : 0
-              }
-            ]}
-            onPress={handlePunch}
-            disabled={loading}
-          >
-            {loading ? (
-              <ActivityIndicator color="#FFFFFF" size="large" />
-            ) : (
-              <View style={{ width: '100%' }}>
-                {isCheckedIn ? (
-                  <View style={{ alignItems: 'center' }}>
-                    <Text style={{ fontSize: 11, color: isDarkMode ? '#94A3B8' : '#64748B', fontWeight: '700', marginBottom: 15, letterSpacing: 0.5 }}>Total Worked Hours</Text>
-
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 20 }}>
-                      <View style={{ alignItems: 'center', gap: 6 }}>
-                        <View style={{ flexDirection: 'row', gap: 4 }}>
+           <View style={[styles.staticCard, { backgroundColor: isDarkMode ? '#1E293B' : '#E9ECEF' }]}>
+              <Text style={{ fontSize: 12, color: isDarkMode ? '#94A3B8' : '#64748B', fontWeight: '800', textAlign: 'center', marginTop: 15, marginBottom: 15 }}>Total Worked Hours</Text>
+              
+              <View style={[styles.staticTimerBox, { backgroundColor: C.white, borderRadius: 15, padding: 15, marginHorizontal: 15, marginBottom: 20 }]}>
+                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                    <View style={{ alignItems: 'center', gap: 6 }}>
+                       <View style={{ flexDirection: 'row', gap: 4 }}>
                           <View style={styles.digitBox}><Text style={styles.digitText}>{(workedTime.split(':')[0] || '00')[0] || '0'}</Text></View>
                           <View style={styles.digitBox}><Text style={styles.digitText}>{(workedTime.split(':')[0] || '00')[1] || '0'}</Text></View>
-                        </View>
-                        <Text style={styles.digitSub}>HOURS</Text>
-                      </View>
-                      <Text style={styles.colon}>:</Text>
-                      <View style={{ alignItems: 'center', gap: 6 }}>
-                        <View style={{ flexDirection: 'row', gap: 4 }}>
+                       </View>
+                       <Text style={styles.digitSub}>HOURS</Text>
+                    </View>
+                    <Text style={styles.colon}>:</Text>
+                    <View style={{ alignItems: 'center', gap: 6 }}>
+                       <View style={{ flexDirection: 'row', gap: 4 }}>
                           <View style={styles.digitBox}><Text style={styles.digitText}>{(workedTime.split(':')[1] || '00')[0] || '0'}</Text></View>
                           <View style={styles.digitBox}><Text style={styles.digitText}>{(workedTime.split(':')[1] || '00')[1] || '0'}</Text></View>
-                        </View>
-                        <Text style={styles.digitSub}>MINUTES</Text>
-                      </View>
-                      <Text style={styles.colon}>:</Text>
-                      <View style={{ alignItems: 'center', gap: 6 }}>
-                        <View style={{ flexDirection: 'row', gap: 3 }}>
+                       </View>
+                       <Text style={styles.digitSub}>MINUTES</Text>
+                    </View>
+                    <Text style={styles.colon}>:</Text>
+                    <View style={{ alignItems: 'center', gap: 6 }}>
+                       <View style={{ flexDirection: 'row', gap: 4 }}>
                           <View style={styles.digitBox}><Text style={styles.digitText}>{(workedTime.split(':')[2] || '00')[0] || '0'}</Text></View>
                           <View style={styles.digitBox}><Text style={styles.digitText}>{(workedTime.split(':')[2] || '00')[1] || '0'}</Text></View>
-                        </View>
-                        <Text style={styles.digitSub}>SECONDS</Text>
-                      </View>
+                       </View>
+                       <Text style={styles.digitSub}>SECONDS</Text>
                     </View>
-
-                    <View style={{ height: 1, backgroundColor: isDarkMode ? '#334155' : '#E9ECEF', width: '100%', marginBottom: 15 }} />
-
-                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%', paddingHorizontal: 10 }}>
-                      <View style={{ alignItems: 'flex-start' }}>
-                        <Text style={{ fontSize: 11, fontWeight: '800', color: '#4CAF50', marginBottom: 2 }}>Check In</Text>
-                        <Text style={{ fontSize: 10, color: isDarkMode ? '#94A3B8' : '#64748B', fontWeight: '600' }}>{new Date().toLocaleDateString([], { day: '2-digit', month: '2-digit', year: 'numeric' })}</Text>
-                        <Text style={{ fontSize: 13, fontWeight: '800', color: isDarkMode ? '#F8F9FB' : '#1B1B2F' }}>{lastCheckIn || '--:--'}</Text>
-                      </View>
-
-                      <IconSymbol name="arrow.right" size={16} color={isDarkMode ? '#334155' : '#CED4DA'} />
-
-                      <View style={{ alignItems: 'flex-end' }}>
-                        <Text style={{ fontSize: 11, fontWeight: '800', color: '#F44336', marginBottom: 2 }}>Check Out</Text>
-                        <Text style={{ fontSize: 10, color: isDarkMode ? '#94A3B8' : '#64748B', fontWeight: '600' }}>{new Date().toLocaleDateString([], { day: '2-digit', month: '2-digit', year: 'numeric' })}</Text>
-                        <Text style={{ fontSize: 13, fontWeight: '800', color: isDarkMode ? '#F8F9FB' : '#1B1B2F' }}>--:--</Text>
-                      </View>
-                    </View>
-                  </View>
-                ) : (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 15 }}>
-                    <View style={{ width: 50, height: 50, borderRadius: 15, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' }}>
-                      <IconSymbol name="hand.tap.fill" size={24} color="#FFFFFF" />
-                    </View>
-                    <View>
-                      <Text style={{ color: '#FFFFFF', fontSize: 18, fontWeight: '900', letterSpacing: 0.5 }}>START SHIFT</Text>
-                      <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, fontWeight: '600' }}>Tap to punch in for today</Text>
-                    </View>
-                  </View>
-                )}
+                 </View>
               </View>
-            )}
-          </TouchableOpacity>
+
+              <View style={{ height: 1, backgroundColor: 'rgba(0,0,0,0.05)', width: '100%', marginBottom: 15 }} />
+              
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%', paddingHorizontal: 20, paddingBottom: 20 }}>
+                 <View style={{ alignItems: 'flex-start' }}>
+                    <Text style={{ fontSize: 11, fontWeight: '800', color: '#4CAF50', marginBottom: 2 }}>Check In</Text>
+                    <Text style={{ fontSize: 14, fontWeight: '900', color: C.text }}>{lastCheckIn || '--:--'}</Text>
+                 </View>
+
+                 <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={{ fontSize: 11, fontWeight: '800', color: '#F44336', marginBottom: 2 }}>Check Out</Text>
+                    <Text style={{ fontSize: 14, fontWeight: '900', color: C.text }}>{lastCheckOut || '--:--'}</Text>
+                 </View>
+              </View>
+           </View>
         </View>
 
         {/* Recent History */}

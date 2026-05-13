@@ -14,6 +14,21 @@ export default function ProfileScreen() {
   const [userName, setUserName] = useState('Harsh Rajput');
   const [profileImage, setProfileImage] = useState<string | null>(null);
   const [imagePickerVisible, setImagePickerVisible] = useState(false);
+  const [employeeDetails, setEmployeeDetails] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+
+  const getAuthHeader = async (): Promise<string | null> => {
+    const rawToken = await AsyncStorage.getItem('user_token');
+    if (!rawToken) return null;
+    const token = rawToken.trim();
+    if (token.toLowerCase().startsWith('token ') || token.toLowerCase().startsWith('bearer ')) {
+      return token;
+    }
+    if (token.includes(':')) {
+      return `token ${token}`;
+    }
+    return token; // fallback to raw
+  };
 
   useFocusEffect(
     useCallback(() => {
@@ -24,8 +39,39 @@ export default function ProfileScreen() {
           
           const savedImage = await AsyncStorage.getItem('profile_image');
           if (savedImage) setProfileImage(savedImage);
+
+          const userId = await AsyncStorage.getItem('user_id');
+          const authHeader = await getAuthHeader();
+
+          if (userId && authHeader) {
+            console.log('Profile: Fetching details for:', userId, 'Header:', authHeader);
+            setLoading(true);
+            const response = await fetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_employee_details', {
+        credentials: 'include',
+              method: 'POST',
+              headers: {
+                'Authorization': authHeader,
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+              },
+              body: JSON.stringify({ employee: userId.trim() })
+            });
+
+            console.log('Profile: Response Status:', response.status);
+            if (response.ok) {
+              const result = await response.json();
+              console.log('Profile: Details Result:', result);
+              if (result.message) {
+                setEmployeeDetails(result.message);
+                if (result.message.employee_name) setUserName(result.message.employee_name);
+              }
+            }
+          }
         } catch (e) {
           console.error('Failed to load profile data', e);
+        } finally {
+          setLoading(false);
         }
       };
       loadData();
@@ -68,14 +114,14 @@ export default function ProfileScreen() {
 
   const C = {
     primary: '#4361EE',
-    bg: isDarkMode ? '#0F172A' : '#F8F9FB',
-    card: isDarkMode ? '#1E293B' : '#FFFFFF',
+    bg: isDarkMode ? '#0B0E14' : '#F8F9FB',
+    card: isDarkMode ? '#161B22' : '#FFFFFF',
     text: isDarkMode ? '#F8F9FB' : '#0F172A',
     subText: isDarkMode ? '#94A3B8' : '#64748B',
     white: '#FFFFFF',
-    dark: isDarkMode ? '#000000' : '#1B1B2F',
-    gray50: isDarkMode ? '#334155' : '#F8F9FA',
-    gray100: isDarkMode ? '#334155' : '#F1F3F5',
+    dark: isDarkMode ? '#050505' : '#1B1B2F',
+    gray50: isDarkMode ? '#1F2937' : '#F8F9FA',
+    gray100: isDarkMode ? '#374151' : '#F1F3F5',
   };
 
   const menuItems = [
@@ -131,15 +177,23 @@ export default function ProfileScreen() {
 
         <View style={styles.statsGrid}>
           <View style={[styles.statItem, { backgroundColor: C.card }]}>
-            <Text style={[styles.statValue, { color: C.text }]}>05 May</Text>
+            <Text style={[styles.statValue, { color: C.text }]}>
+              {employeeDetails?.date_of_joining 
+                ? new Date(employeeDetails.date_of_joining).toLocaleDateString([], { day: '2-digit', month: 'short' })
+                : '-- --'}
+            </Text>
             <Text style={[styles.statLabel, { color: C.subText }]}>Joined</Text>
           </View>
           <View style={[styles.statItem, { backgroundColor: C.card }]}>
-            <Text style={[styles.statValue, { color: C.text }]}>IT Dept</Text>
+            <Text style={[styles.statValue, { color: C.text }]} numberOfLines={2} adjustsFontSizeToFit={true} minimumFontScale={0.7}>
+              {employeeDetails?.department || 'IT Dept'}
+            </Text>
             <Text style={[styles.statLabel, { color: C.subText }]}>Dept</Text>
           </View>
           <View style={[styles.statItem, { backgroundColor: C.card }]}>
-            <Text style={[styles.statValue, { color: C.text }]}>Full Time</Text>
+            <Text style={[styles.statValue, { color: C.text }]}>
+              {employeeDetails?.employment_type || 'Full Time'}
+            </Text>
             <Text style={[styles.statLabel, { color: C.subText }]}>Type</Text>
           </View>
         </View>
@@ -225,9 +279,9 @@ const styles = StyleSheet.create({
   userName: { fontSize: 22, fontWeight: '900', marginBottom: 4 },
   userRole: { fontSize: 13, fontWeight: '600' },
   statsGrid: { flexDirection: 'row', paddingHorizontal: 20, gap: 10, marginBottom: 30 },
-  statItem: { flex: 1, padding: 12, borderRadius: 20, alignItems: 'center', elevation: 2, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 10 },
-  statValue: { fontSize: 14, fontWeight: '800', marginBottom: 2 },
-  statLabel: { fontSize: 10, fontWeight: '700', textTransform: 'uppercase' },
+  statItem: { flex: 1, padding: 8, borderRadius: 16, alignItems: 'center', elevation: 2, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 10 },
+  statValue: { fontSize: 12, fontWeight: '800', marginBottom: 2 },
+  statLabel: { fontSize: 8, fontWeight: '700', textTransform: 'uppercase' },
   menuContainer: { paddingHorizontal: 20, gap: 12, marginBottom: 15 },
   menuItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderRadius: 24, elevation: 2, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 10 },
   menuItemLeft: { flexDirection: 'row', alignItems: 'center', gap: 15 },

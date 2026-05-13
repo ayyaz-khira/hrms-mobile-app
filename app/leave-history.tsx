@@ -1,12 +1,75 @@
-import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, FlatList, StatusBar } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, FlatList, StatusBar, ActivityIndicator, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { router } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function LeaveHistoryScreen() {
   const { isDarkMode } = useTheme();
+  const [requests, setRequests] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchHistory = useCallback(async () => {
+    try {
+      setLoading(true);
+      const token = await AsyncStorage.getItem('user_token');
+      const userId = await AsyncStorage.getItem('user_id');
+
+      if (!token || !userId) {
+        setLoading(false);
+        return;
+      }
+
+      // Smart Auth Header
+      const rawToken = token.trim();
+      let authHeader = rawToken;
+      if (!rawToken.toLowerCase().startsWith('token ') && !rawToken.toLowerCase().startsWith('bearer ')) {
+        authHeader = rawToken.includes(':') ? `token ${rawToken}` : rawToken;
+      }
+
+      const response = await fetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_leave_applications', {
+        credentials: 'include',
+        method: 'POST',
+        headers: {
+          'Authorization': authHeader,
+          'sid': authHeader,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: JSON.stringify({ employee: userId.trim() })
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        const message = result.message;
+        const data = message?.data || (Array.isArray(message) ? message : []);
+        
+        if (Array.isArray(data)) {
+          const mapped = data.map((l: any, index: number) => ({
+            id: String(l.name || index),
+            type: l.leave_type || 'Leave Request',
+            range: `${l.from_date} - ${l.to_date}`,
+            days: `${l.total_leave_days} days`,
+            status: l.status || 'Pending',
+            color: l.status === 'Approved' ? '#4CAF50' : (l.status === 'Rejected' ? '#F44336' : '#FF9800'),
+            date: `Applied on ${l.posting_date || 'N/A'}`
+          }));
+          setRequests(mapped);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch leave history:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchHistory();
+  }, [fetchHistory]);
 
   const C = {
     primary: '#4361EE',
@@ -23,16 +86,6 @@ export default function LeaveHistoryScreen() {
     gray100: isDarkMode ? '#334155' : '#F1F3F5',
   };
 
-  const ALL_REQUESTS = [
-    { id: '1', type: 'Casual Leave', range: 'Apr 28 - Apr 29', days: '2 days', status: 'Approved', color: C.success, date: 'Applied on 20 Apr' },
-    { id: '2', type: 'Sick Leave', range: 'May 02 - May 02', days: '1 day', status: 'Pending', color: C.warning, date: 'Applied on 01 May' },
-    { id: '3', type: 'Compensatory Off', range: 'May 03 - May 03', days: '1 day', status: 'Pending', color: C.warning, date: 'Applied on 01 May' },
-    { id: '4', type: 'Earned Leave', range: 'Apr 25 - Apr 26', days: '2 days', status: 'Rejected', color: C.danger, date: 'Applied on 20 Apr' },
-    { id: '5', type: 'Casual Leave', range: 'Apr 10 - Apr 12', days: '3 days', status: 'Approved', color: C.success, date: 'Applied on 05 Apr' },
-    { id: '6', type: 'Sick Leave', range: 'Mar 28 - Mar 28', days: '1 day', status: 'Approved', color: C.success, date: 'Applied on 25 Mar' },
-    { id: '7', type: 'Earned Leave', range: 'Mar 15 - Mar 17', days: '3 days', status: 'Approved', color: C.success, date: 'Applied on 10 Mar' },
-  ];
-
   return (
     <View style={[styles.mainContainer, { backgroundColor: C.bg }]}>
       <StatusBar barStyle="light-content" backgroundColor={C.dark} />
@@ -46,20 +99,32 @@ export default function LeaveHistoryScreen() {
                 <IconSymbol name="arrow.left" size={24} color="#FFFFFF" />
               </TouchableOpacity>
               <Text style={styles.headerTitle}>Leave History</Text>
-              <TouchableOpacity style={styles.filterBtn}>
+              <View style={styles.headerIconContainer}>
                 <IconSymbol name="list.bullet.indent" size={20} color="#FFFFFF" />
-              </TouchableOpacity>
+              </View>
             </View>
           </SafeAreaView>
         </View>
       </View>
 
-      <FlatList
-        data={ALL_REQUESTS}
-        keyExtractor={(item) => item.id}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingTop: 20, paddingHorizontal: 20, paddingBottom: 50 }}
-        renderItem={({ item }) => (
+      {loading ? (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator size="large" color={C.primary} />
+          <Text style={{ marginTop: 10, color: C.subText }}>Loading history...</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={requests}
+          keyExtractor={(item) => item.id}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingTop: 20, paddingHorizontal: 20, paddingBottom: 50 }}
+          ListEmptyComponent={
+            <View style={{ marginTop: 50, alignItems: 'center' }}>
+              <IconSymbol name="calendar.badge.exclamationmark" size={50} color={C.gray100} />
+              <Text style={{ marginTop: 20, color: C.subText, fontSize: 16 }}>No leave records found</Text>
+            </View>
+          }
+          renderItem={({ item }) => (
           <TouchableOpacity style={[styles.requestCard, { backgroundColor: C.card }]}>
             <View style={[styles.statusStrip, { backgroundColor: item.color }]} />
             <View style={styles.cardMain}>
@@ -86,7 +151,8 @@ export default function LeaveHistoryScreen() {
             </View>
           </TouchableOpacity>
         )}
-      />
+        />
+      )}
     </View>
   );
 }
@@ -99,6 +165,9 @@ const styles = StyleSheet.create({
   backBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 12 },
   headerTitle: { fontSize: 18, fontWeight: '800', color: '#FFFFFF' },
   filterBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 12 },
+  headerIconContainer: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 12 },
+  logoContainer: { width: 80, height: 40, justifyContent: 'center', alignItems: 'flex-end' },
+  logo: { width: '100%', height: '100%' },
   requestCard: { borderRadius: 24, flexDirection: 'row', marginBottom: 15, overflow: 'hidden', elevation: 3, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 10 },
   statusStrip: { width: 6, height: '100%' },
   cardMain: { flex: 1, padding: 18 },

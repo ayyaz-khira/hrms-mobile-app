@@ -45,8 +45,8 @@ const C = {
 // ─── Logo SVG ────────────────────────────────────────────────────────────────
 const LogoMark = () => (
   <Image
-    source={require('../assets/images/logo.png')}
-    style={{ width: 80, height: 80, marginBottom: 0 }}
+    source={require('../assets/images/app_logo.png')}
+    style={{ width: 240, height: 240, marginTop: -20, marginBottom: -50 }}
     resizeMode="contain"
   />
 );
@@ -142,6 +142,7 @@ export default function NessScaleLogin() {
     try {
       const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'https://staging.microcrispr.com/api/method/hrms_application.api.mobile_login';
       const response = await fetch(apiUrl, {
+        credentials: 'include',
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -155,41 +156,46 @@ export default function NessScaleLogin() {
 
       const result = await response.json();
       if (response.ok) {
+        console.log('🔑 Full login response:', result);
         const message = result.message || result;
-        console.log('🔑 Full login response:', JSON.stringify(result));
-        
+
         // Ensure we actually got a token or valid response before proceeding
         if (!message.token && message !== 'authenticated' && !result.token) {
-           showToast(message.message || message || 'Invalid credentials', false);
-           setLoading(false);
-           return;
+          showToast(message.message || message || 'Invalid credentials', false);
+          setLoading(false);
+          return;
         }
 
-        let token = message.token || result.token || (message.api_key && message.api_secret ? `${message.api_key}:${message.api_secret}` : 'authenticated');
-        
+        // Priority: 1. API Key/Secret (Permanent), 2. Session Token (Temporary)
+        let token = (message.api_key && message.api_secret)
+          ? `${message.api_key}:${message.api_secret}`
+          : (message.token || result.token || 'authenticated');
+
         // Standardize: Ensure API key/secret has 'token ' prefix for all future requests
         if (message.api_key && message.api_secret && !token.startsWith('token ')) {
           token = `token ${token}`;
         }
-        
+
         console.log('🔑 Token Captured:', token.substring(0, 15) + '...');
         await AsyncStorage.setItem('user_token', token);
-        
+
         // Since login didn't provide user details, we MUST fetch them now using the token
         try {
           const detailsResponse = await fetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_employee_details', {
+        credentials: 'include',
             method: 'POST',
             headers: {
-              'Authorization': token, // Already has 'token ' prefix if needed
+              'Authorization': token,
               'Content-Type': 'application/json',
               'Accept': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest',
             },
             body: JSON.stringify({ email: email.trim() })
           });
-          
+
           const detailsResult = await detailsResponse.json();
           const empData = detailsResult.message;
-          
+
           if (empData) {
             console.log('🆔 Found Employee ID:', empData.name);
             await AsyncStorage.setItem('user_id', empData.name);
@@ -225,9 +231,8 @@ export default function NessScaleLogin() {
       <View style={styles.loginCard}>
         <View style={styles.heroSection}>
           <LogoMark />
-          <Text style={styles.brandName}>CRONIX</Text>
+          <Text style={styles.brandName}>CRONIC</Text>
         </View>
-
         <View style={styles.waveDivider} />
 
         <ScrollView
@@ -286,8 +291,11 @@ export default function NessScaleLogin() {
             )}
           </View>
 
-          <TouchableOpacity style={styles.forgotRow} onPress={() => showToast('Reset link sent', true)}>
-            <Text style={styles.forgotLink}>Forgot password?</Text>
+          <TouchableOpacity style={styles.forgotRow} onPress={() => router.push('/forgot-password')}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <IconSymbol name="questionmark.circle.fill" size={14} color={C.primary} />
+              <Text style={styles.forgotLink}>Forgot password</Text>
+            </View>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -303,40 +311,7 @@ export default function NessScaleLogin() {
             )}
           </TouchableOpacity>
 
-          <View style={styles.divider}>
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>or continue with</Text>
-            <View style={styles.dividerLine} />
-          </View>
 
-          <TouchableOpacity
-            style={styles.ssoBtn}
-            onPress={() => showToast('SSO login coming soon', false)}
-            activeOpacity={0.85}
-          >
-            <View style={styles.ssoIcon}>
-              <Image
-                source={{ uri: 'https://img.icons8.com/color/48/000000/google-logo.png' }}
-                style={{ width: 20, height: 20 }}
-              />
-            </View>
-            <Text style={styles.ssoBtnText}>Sign in with Google</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.ssoBtn}
-            onPress={() => showToast('Microsoft SSO coming soon', false)}
-            activeOpacity={0.85}
-          >
-            <View style={styles.ssoIcon}>
-              <Image
-                source={{ uri: 'https://img.icons8.com/color/48/000000/microsoft.png' }}
-                style={{ width: 20, height: 20 }}
-                resizeMode="contain"
-              />
-            </View>
-            <Text style={styles.ssoBtnText}>Sign in with Microsoft</Text>
-          </TouchableOpacity>
 
           <View style={styles.helpRow}>
             <Text style={styles.helpText}>Need help? </Text>
@@ -362,26 +337,58 @@ const styles = StyleSheet.create({
   loginCard: {
     width: '100%',
     height: '100%',
-    backgroundColor: C.white,
+    backgroundColor: C.gray100,
     borderRadius: 0,
     overflow: 'hidden',
   },
   heroSection: {
-    backgroundColor: C.white,
-    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) + 12 : 44,
-    paddingBottom: 20,
+    backgroundColor: '#FFFFFF',
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) - 20 : 10,
+    paddingBottom: 10,
     alignItems: 'center',
+    overflow: 'hidden',
   },
   brandName: {
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: '900',
     color: C.gray900,
-    letterSpacing: 1.2,
-    marginTop: -10,
+    letterSpacing: 2,
+  },
+  brandUnderline: {
+    width: 40,
+    height: 4,
+    backgroundColor: '#0A4DA1',
+    borderRadius: 2,
+    marginTop: 4,
+  },
+  brandSubtitle: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: C.gray500,
+    letterSpacing: 3,
+    marginTop: 8,
+  },
+  heroDecorCircle1: {
+    position: 'absolute',
+    top: -40,
+    right: -40,
+    width: 150,
+    height: 150,
+    borderRadius: 75,
+    backgroundColor: 'rgba(10, 77, 161, 0.04)',
+  },
+  heroDecorCircle2: {
+    position: 'absolute',
+    bottom: -30,
+    left: -40,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: 'rgba(10, 77, 161, 0.06)',
   },
   waveDivider: {
-    height: 28,
     backgroundColor: C.white,
+    height: 28,
     borderBottomLeftRadius: 24,
     borderBottomRightRadius: 24,
   },
@@ -417,9 +424,9 @@ const styles = StyleSheet.create({
     letterSpacing: 0.1,
   },
   inputWrap: {
+    backgroundColor: C.white,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: C.white,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: C.gray300,
@@ -499,7 +506,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    backgroundColor: C.white,
+    backgroundColor: C.gray100,
     borderWidth: 1,
     borderColor: C.gray300,
     borderRadius: 12,

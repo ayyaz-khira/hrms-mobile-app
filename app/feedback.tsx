@@ -52,6 +52,7 @@ export default function FeedbackScreen() {
       
       // In a real app, you'd call your Feedback API here
       // const response = await fetch('...', { ... });
+        credentials: 'include',
       
       // Simulating API call
       await new Promise(resolve => setTimeout(resolve, 1500));
@@ -87,7 +88,7 @@ export default function FeedbackScreen() {
           {/* Illustration/Hero Area */}
           <View style={styles.heroArea}>
             <View style={[styles.iconCircle, { backgroundColor: C.primary + '15' }]}>
-              <IconSymbol name="star.bubble.fill" size={40} color={C.primary} />
+              <IconSymbol name="bubble.left" size={40} color={C.primary} />
             </View>
             <Text style={[styles.heroTitle, { color: C.text }]}>How was your experience?</Text>
             <Text style={[styles.heroSub, { color: C.subText }]}>Your feedback helps us improve the app for everyone.</Text>

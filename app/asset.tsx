@@ -26,6 +26,7 @@ export default function AssetScreen() {
         const apiUrl = 'https://staging.microcrispr.com/api/method/hrms_application.api.get_employee_assets';
         
         const response = await fetch(apiUrl, {
+        credentials: 'include',
           method: 'POST',
           headers: {
             'Authorization': token || '',
@@ -60,6 +61,7 @@ export default function AssetScreen() {
       const apiUrl = 'https://staging.microcrispr.com/api/method/hrms_application.api.request_new_asset';
 
       const response = await fetch(apiUrl, {
+        credentials: 'include',
         method: 'POST',
         headers: {
           'Authorization': token || '',

@@ -97,6 +97,9 @@ const MAPPING = {
   'hand.thumbsup': 'thumb-up',
   'bubble.left': 'chat-bubble',
   'square.and.pencil': 'edit',
+  'lock.shield.fill': 'admin-panel-settings',
+  'questionmark.circle.fill': 'help',
+  'line.3.horizontal': 'menu',
 } as IconMapping;
 
 /**

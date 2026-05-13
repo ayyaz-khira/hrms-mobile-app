@@ -23,6 +23,7 @@ export default function ExpenseScreen() {
         const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'https://api.minix.com';
 
         const response = await fetch(`${apiUrl}/employee/expenses`, {
+        credentials: 'include',
           headers: {
             'Authorization': token ? `Bearer ${token}` : '',
             'Accept': 'application/json',

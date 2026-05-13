@@ -11,53 +11,110 @@ const { width } = Dimensions.get('window');
 export default function LeaveTrackerScreen() {
    const { isDarkMode } = useTheme();
    const [leaveData, setLeaveData] = useState({
-      casual: { used: 12, total: 15 },
-      sick: { used: 8, total: 10 },
-      requests: [
-         { type: 'Casual Leave', range: 'Apr 10 - Apr 11', days: '2 days', status: 'Approved', statusColor: '#4CAF50', bgColor: '#E8F5E9' },
-         { type: 'Sick Leave', range: 'Apr 29 - Apr 30', days: '2 days', status: 'Pending', statusColor: '#FF9800', bgColor: '#FFF3E0' },
-      ]
+      casual: { used: 2, total: 12 },
+      sick: { used: 1, total: 8 },
+      privilege: { used: 5, total: 15 },
+      compOff: { used: 0, total: 4 },
+      requests: []
    });
 
-   useFocusEffect(
-      useCallback(() => {
-         const fetchLeave = async () => {
-            try {
-               const token = await AsyncStorage.getItem('user_token');
-               const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'https://api.minix.com';
-               
-               const response = await fetch(`${apiUrl}/leave/summary`, {
-                  headers: {
-                     'Authorization': token ? `Bearer ${token}` : '',
-                     'Accept': 'application/json',
-                  }
-               });
+  useFocusEffect(
+    useCallback(() => {
+      const fetchLeave = async () => {
+        try {
+          const token = await AsyncStorage.getItem('user_token');
+          const userId = await AsyncStorage.getItem('user_id');
 
-               if (response.ok) {
-                  const data = await response.json();
-                  setLeaveData(prev => ({ ...prev, ...data }));
-               }
-            } catch (e) {
-               console.error('Failed to fetch leave data', e);
+          if (!token || !userId) return;
+
+          const rawToken = token.trim();
+          let authHeader = rawToken;
+          if (!rawToken.toLowerCase().startsWith('token ') && !rawToken.toLowerCase().startsWith('bearer ')) {
+            authHeader = rawToken.includes(':') ? `token ${rawToken}` : rawToken;
+          }
+
+          const commonHeaders = {
+            'Authorization': authHeader,
+            'sid': authHeader,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+          };
+
+          // 1. Fetch Leave Balance (via employee details)
+          const detailsResponse = await fetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_employee_details', {
+        credentials: 'include',
+            method: 'POST',
+            headers: commonHeaders,
+            body: JSON.stringify({ employee: userId.trim() })
+          });
+
+          if (detailsResponse.ok) {
+            const detailsResult = await detailsResponse.json();
+            const details = detailsResult.message;
+            if (details && details.leave_details) {
+              setLeaveData(prev => ({ 
+                ...prev, 
+                casual: details.leave_details.casual || prev.casual,
+                sick: details.leave_details.sick || prev.sick,
+                privilege: details.leave_details.privilege || prev.privilege,
+                compOff: details.leave_details.compensatory_off || prev.compOff
+              }));
             }
-         };
-         fetchLeave();
-      }, [])
-   );
+          }
+
+          // 2. Fetch Leave Applications (Requests List)
+          const requestsResponse = await fetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_leave_applications', {
+        credentials: 'include',
+            method: 'POST',
+            headers: commonHeaders,
+            body: JSON.stringify({ employee: userId.trim() })
+          });
+
+          if (requestsResponse.ok) {
+            const requestsResult = await requestsResponse.json();
+            const message = requestsResult.message;
+            console.log("📥 Leave Data Received:", JSON.stringify(message).substring(0, 100) + "...");
+            
+            // The logs show data is inside message.data
+            const logs = message?.data || (Array.isArray(message) ? message : []);
+            console.log("📥 Leave Requests Count:", logs.length);
+            
+            if (Array.isArray(logs)) {
+               const mapped = logs.map((l: any) => ({
+                  type: l.leave_type || 'Leave Request',
+                  range: `${l.from_date} - ${l.to_date}`,
+                  days: `${l.total_leave_days} days`,
+                  status: l.status || 'Pending',
+                  statusColor: l.status === 'Approved' ? '#4CAF50' : (l.status === 'Rejected' ? '#F44336' : '#FF9800'),
+                  bgColor: l.status === 'Approved' ? '#E8F5E9' : (l.status === 'Rejected' ? '#FFEBEE' : '#FFF3E0')
+               }));
+               // Show last 3 in Active Requests
+               setLeaveData(prev => ({ ...prev, requests: mapped.slice(0, 3) }));
+            }
+          }
+        } catch (e) {
+          console.error('Failed to fetch leave data', e);
+        }
+      };
+
+      fetchLeave();
+    }, [])
+  );
 
    const C = {
       primary: '#4361EE',
-      success: '#2EC4B6',
-      danger: '#E71D36',
-      warning: '#FF9F1C',
-      bg: isDarkMode ? '#0F172A' : '#F8F9FB',
-      card: isDarkMode ? '#1E293B' : '#FFFFFF',
+      success: '#10B981',
+      danger: '#EF4444',
+      warning: '#F59E0B',
+      bg: isDarkMode ? '#0B0E14' : '#F8F9FB',
+      card: isDarkMode ? '#161B22' : '#FFFFFF',
       text: isDarkMode ? '#F8F9FB' : '#212529',
       subText: isDarkMode ? '#94A3B8' : '#64748B',
       white: '#FFFFFF',
-      dark: isDarkMode ? '#000000' : '#1B1B2F',
-      gray50: isDarkMode ? '#334155' : '#F8F9FA',
-      gray100: isDarkMode ? '#334155' : '#F1F3F5',
+      dark: isDarkMode ? '#050505' : '#1B1B2F',
+      gray50: isDarkMode ? '#1F2937' : '#F8F9FA',
+      gray100: isDarkMode ? '#374151' : '#F1F3F5',
    };
    return (
       <View style={[styles.mainContainer, { backgroundColor: C.bg }]}>
@@ -85,14 +142,24 @@ export default function LeaveTrackerScreen() {
          >
             <View style={styles.summaryGrid}>
                <View style={[styles.summaryCard, { backgroundColor: '#4361EE' }]}>
-                  <Text style={styles.summaryLabel}>Casual Leave</Text>
-                  <Text style={styles.summaryValue}>{leaveData.casual.used} / {leaveData.casual.total}</Text>
-                  <Text style={styles.summarySub}>Days Remaining</Text>
+                  <Text style={styles.summaryLabel}>Casual</Text>
+                  <Text style={styles.summaryValue}>{leaveData.casual.used}/{leaveData.casual.total}</Text>
+                  <Text style={styles.summarySub}>Remaining</Text>
                </View>
                <View style={[styles.summaryCard, { backgroundColor: '#FF9800' }]}>
-                  <Text style={styles.summaryLabel}>Sick Leave</Text>
-                  <Text style={styles.summaryValue}>{leaveData.sick.used} / {leaveData.sick.total}</Text>
-                  <Text style={styles.summarySub}>Days Remaining</Text>
+                  <Text style={styles.summaryLabel}>Sick</Text>
+                  <Text style={styles.summaryValue}>{leaveData.sick.used}/{leaveData.sick.total}</Text>
+                  <Text style={styles.summarySub}>Remaining</Text>
+               </View>
+               <View style={[styles.summaryCard, { backgroundColor: '#2EC4B6' }]}>
+                  <Text style={styles.summaryLabel}>Privilege</Text>
+                  <Text style={styles.summaryValue}>{leaveData.privilege.used}/{leaveData.privilege.total}</Text>
+                  <Text style={styles.summarySub}>Remaining</Text>
+               </View>
+               <View style={[styles.summaryCard, { backgroundColor: '#E71D36' }]}>
+                  <Text style={styles.summaryLabel}>Comp Off</Text>
+                  <Text style={styles.summaryValue}>{leaveData.compOff.used}/{leaveData.compOff.total}</Text>
+                  <Text style={styles.summarySub}>Remaining</Text>
                </View>
             </View>
 
@@ -111,8 +178,14 @@ export default function LeaveTrackerScreen() {
             </View>
 
             <View style={styles.requestList}>
-               {leaveData.requests.map((item, i) => (
-                  <View key={i} style={[styles.requestCard, { backgroundColor: C.card }]}>
+               {leaveData.requests.length === 0 ? (
+                  <View style={[styles.emptyCard, { backgroundColor: C.card }]}>
+                     <IconSymbol name="calendar.badge.exclamationmark" size={32} color={C.gray100} />
+                     <Text style={[styles.emptyText, { color: C.subText }]}>No active leave requests</Text>
+                  </View>
+               ) : (
+                  leaveData.requests.map((item, i) => (
+                     <View key={i} style={[styles.requestCard, { backgroundColor: C.card }]}>
                      <View style={styles.requestTop}>
                         <View>
                            <Text style={[styles.requestType, { color: C.text }]}>{item.type}</Text>
@@ -128,13 +201,14 @@ export default function LeaveTrackerScreen() {
                            <IconSymbol name="clock.fill" size={14} color={C.subText} />
                            <Text style={[styles.metaText, { color: C.subText }]}>{item.days}</Text>
                         </View>
-                        <TouchableOpacity>
+                        <TouchableOpacity onPress={() => router.push('/leave-history')}>
                            <Text style={[styles.detailsText, { color: C.primary }]}>View Details</Text>
                         </TouchableOpacity>
                      </View>
                   </View>
-               ))}
-            </View>
+               ))
+            )}
+         </View>
 
             <View style={styles.sectionHeader}>
                <Text style={[styles.sectionTitle, { color: C.text }]}>Leave Calendar</Text>
@@ -168,8 +242,8 @@ const styles = StyleSheet.create({
    backBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 12 },
    headerTitle: { fontSize: 18, fontWeight: '800', color: '#FFFFFF' },
    content: { flex: 1 },
-   summaryGrid: { flexDirection: 'row', gap: 15, paddingHorizontal: 20 },
-   summaryCard: { flex: 1, borderRadius: 24, padding: 18, elevation: 5 },
+   summaryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, paddingHorizontal: 20 },
+   summaryCard: { width: (width - 52) / 2, borderRadius: 20, padding: 15, elevation: 4 },
    summaryLabel: { color: 'rgba(255,255,255,0.8)', fontSize: 11, fontWeight: '700', textTransform: 'uppercase', marginBottom: 8 },
    summaryValue: { color: '#FFFFFF', fontSize: 22, fontWeight: '900', marginBottom: 4 },
    summarySub: { color: 'rgba(255,255,255,0.6)', fontSize: 10, fontWeight: '600' },
@@ -180,6 +254,8 @@ const styles = StyleSheet.create({
    sectionHeader: { paddingHorizontal: 20, marginTop: 30, marginBottom: 15 },
    sectionTitle: { fontSize: 16, fontWeight: '800' },
    requestList: { paddingHorizontal: 20, gap: 15 },
+   emptyCard: { borderRadius: 24, padding: 30, alignItems: 'center', justifyContent: 'center', borderStyle: 'dashed', borderWidth: 2, borderColor: 'rgba(0,0,0,0.05)' },
+   emptyText: { marginTop: 12, fontSize: 14, fontWeight: '600' },
    requestCard: { borderRadius: 24, padding: 20, elevation: 2 },
    requestTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 15 },
    requestType: { fontSize: 15, fontWeight: '800', marginBottom: 4 },

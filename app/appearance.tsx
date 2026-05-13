@@ -68,28 +68,6 @@ export default function AppearanceScreen() {
            </View>
         </View>
 
-        <View style={styles.sectionHeader}>
-           <Text style={[styles.sectionTitle, { color: C.text }]}>System Defaults</Text>
-        </View>
-
-        <View style={[styles.card, { backgroundColor: C.card }]}>
-           <TouchableOpacity style={styles.settingRow}>
-              <View style={styles.settingLeft}>
-                 <View style={[styles.iconContainer, { backgroundColor: isDarkMode ? '#334155' : '#F8F9FA' }]}>
-                    <IconSymbol name="iphone" size={22} color={C.subText} />
-                 </View>
-                 <View>
-                    <Text style={[styles.settingLabel, { color: C.text }]}>Sync with System</Text>
-                    <Text style={[styles.settingSub, { color: C.subText }]}>Match device appearance automatically</Text>
-                 </View>
-              </View>
-              <Switch 
-                 value={false}
-                 trackColor={{ false: '#CBD5E1', true: C.primary }}
-                 thumbColor="#FFFFFF"
-              />
-           </TouchableOpacity>
-        </View>
 
         <View style={styles.infoBox}>
            <IconSymbol name="info.circle" size={16} color={C.subText} />
