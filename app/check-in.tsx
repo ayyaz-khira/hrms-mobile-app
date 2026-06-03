@@ -81,7 +81,7 @@ export default function CheckInScreen() {
         credentials: 'include',
         method: 'POST',
         headers: {
-          Authorization: token || '',
+          Authorization: token ? token.trim().replace(/^(bearer|token)\s+/i, '') : '',
           'Content-Type': 'application/json',
           Accept: 'application/json',
         },

@@ -1,5 +1,5 @@
 import { Tabs, router, useSegments } from 'expo-router';
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Platform, View, TouchableOpacity, StyleSheet, Text, Dimensions, Modal, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
@@ -8,6 +8,8 @@ import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import * as Haptics from 'expo-haptics';
 import { useTheme } from '../../context/ThemeContext';
+import { useLeaveStore } from '../../store/leaveStore';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width } = Dimensions.get('window');
 
@@ -15,6 +17,10 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
   const insets = useSafeAreaInsets();
   const { isDarkMode } = useTheme();
   const [menuVisible, setMenuVisible] = React.useState(false);
+
+  const roles = useLeaveStore((state) => state.roles);
+  const isApprover = roles.includes('Leave Approver');
+  const isHod = roles.includes('HOD') || roles.includes('Department Head');
 
   const C = {
     primary: '#4361EE',
@@ -98,42 +104,63 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
       </TouchableOpacity>
 
       <View style={[styles.tabsRow, { bottom: Platform.OS === 'ios' ? insets.bottom : 5 }]}>
-        {state.routes.map((route: any, index: number) => {
-          const { options } = descriptors[route.key];
-          const label = options.title !== undefined ? options.title : route.name;
-          const isFocused = state.index === index;
+        {(() => {
+          const visibleRoutes = state.routes.filter((route: any) => {
+            if (route.name === 'pending-approvals' || route.name === 'hod-approvals') return false;
+            // Always hide the Approvals tab from the bottom navigation bar
+            if (route.name === 'approvals') return false;
+            return true;
+          });
 
-          const getIcon = () => {
-            switch (route.name) {
-              case 'home': return 'square.grid.2x2.fill';
-              case 'attend': return 'calendar';
-              case 'leave': return 'bed.fill';
-              case 'profile': return 'person.fill';
-              default: return 'house.fill';
-            }
-          };
+          const fabSpaceIndex = Math.floor(visibleRoutes.length / 2);
 
-          return (
-            <React.Fragment key={route.key}>
-              {index === 2 && <View style={styles.fabSpace} />}
-              
-              <TouchableOpacity
-                onPress={() => navigation.navigate(route.name)}
-                style={styles.tabItem}
-                activeOpacity={0.7}
-              >
-                <IconSymbol 
-                  size={24} 
-                  name={getIcon() as any} 
-                  color={isFocused ? C.primary : C.subText} 
-                />
-                <Text style={[styles.tabLabel, { color: isFocused ? C.primary : C.subText }]}>
-                  {label}
-                </Text>
-              </TouchableOpacity>
-            </React.Fragment>
-          );
-        })}
+          return visibleRoutes.map((route: any, index: number) => {
+            const { options } = descriptors[route.key];
+            const label = options.title !== undefined ? options.title : route.name;
+            const isFocused = state.routes[state.index]?.name === route.name;
+
+            const getIcon = () => {
+              switch (route.name) {
+                case 'home': return 'square.grid.2x2.fill';
+                case 'attend': return 'calendar';
+                case 'leave': return 'bed.fill';
+                case 'approvals': return 'checkmark.seal.fill';
+                case 'profile': return 'person.fill';
+                default: return 'house.fill';
+              }
+            };
+
+            return (
+              <React.Fragment key={route.key}>
+                {index === fabSpaceIndex && <View style={styles.fabSpace} />}
+                
+                <TouchableOpacity
+                  onPress={() => navigation.navigate(route.name)}
+                  style={styles.tabItem}
+                  activeOpacity={0.7}
+                >
+                  <IconSymbol 
+                    size={22} 
+                    name={getIcon() as any} 
+                    color={isFocused ? C.primary : C.subText} 
+                  />
+                  <Text 
+                    style={[
+                      styles.tabLabel, 
+                      { 
+                        color: isFocused ? C.primary : C.subText,
+                        fontWeight: isFocused ? '800' : '600'
+                      }
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {label}
+                  </Text>
+                </TouchableOpacity>
+              </React.Fragment>
+            );
+          });
+        })()}
       </View>
     </View>
   );
@@ -141,12 +168,30 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
 
 export default function TabLayout() {
   const segments = useSegments();
-  const tabRoutes = ['home', 'attend', 'leave', 'profile'];
+
+  // Load roles once on component mount
+  const fetchRoles = useLeaveStore((state) => state.fetchRoles);
+  useEffect(() => {
+    const load = async () => {
+      const userId = await AsyncStorage.getItem('user_id');
+      if (userId) {
+        await fetchRoles(userId);
+      }
+    };
+    load();
+  }, []);
+
+  const roles = useLeaveStore((state) => state.roles);
+  const isApprover = roles.includes('Leave Approver');
+  const isHod = roles.includes('HOD') || roles.includes('Department Head');
+
+  const tabRoutes = ['home', 'attend', 'leave', 'approvals', 'profile'];
+
   const currentTab = segments[1] || 'home';
   const currentIndex = tabRoutes.indexOf(currentTab);
 
   const navigateTo = (routeName: string) => {
-    router.push(`/(tabs)/${routeName}`);
+    router.push(`/(tabs)/${routeName}` as any);
   };
 
   const swipeLeft = Gesture.Fling()
@@ -178,6 +223,7 @@ export default function TabLayout() {
           <Tabs.Screen name="home" options={{ title: 'Home' }} />
           <Tabs.Screen name="attend" options={{ title: 'Attend' }} />
           <Tabs.Screen name="leave" options={{ title: 'Leave' }} />
+          <Tabs.Screen name="approvals" options={{ title: 'Approvals' }} />
           <Tabs.Screen name="profile" options={{ title: 'Profile' }} />
         </Tabs>
       </View>
@@ -191,8 +237,8 @@ const styles = StyleSheet.create({
   tabBarCutoutContainer: { width: 80, alignItems: 'center', overflow: 'hidden' },
   tabBarCutout: { width: 90, height: 90, borderRadius: 45, marginTop: -75 },
   tabsRow: { position: 'absolute', left: 0, right: 0, flexDirection: 'row', height: 60, alignItems: 'center', justifyContent: 'space-around', paddingHorizontal: 10 },
-  tabItem: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 4 },
-  tabLabel: { fontSize: 10, fontWeight: '700' },
+  tabItem: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 2 },
+  tabLabel: { fontSize: 8.5, fontWeight: '700', letterSpacing: -0.2 },
   fabSpace: { width: 60 },
   fab: { position: 'absolute', top: -55, left: width / 2 - 28, width: 56, height: 56, borderRadius: 28, padding: 5, elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 6, zIndex: 10, alignItems: 'center' },
   fabInner: { width: '100%', height: '100%', borderRadius: 24, backgroundColor: '#3F51B5', alignItems: 'center', justifyContent: 'center' },

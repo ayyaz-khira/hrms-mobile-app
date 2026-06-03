@@ -60,7 +60,7 @@ export default function PersonalDetailsScreen() {
           {
             method: 'POST',
             headers: {
-              'Authorization': token,
+              'Authorization': token ? token.trim().replace(/^(bearer|token)\s+/i, '') : '',
               'Content-Type': 'application/json',
               Accept: 'application/json',
             },

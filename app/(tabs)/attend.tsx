@@ -34,11 +34,7 @@ export default function AttendanceDetailsScreen() {
           if (!token || !userId) return;
 
           const rawToken = token.trim();
-          let authHeader = rawToken;
-          
-          if (!rawToken.toLowerCase().startsWith('token ') && !rawToken.toLowerCase().startsWith('bearer ')) {
-            authHeader = rawToken.includes(':') ? `token ${rawToken}` : rawToken;
-          }
+          const authHeader = rawToken.toLowerCase().startsWith('bearer ') ? rawToken : `Bearer ${rawToken}`;
           
           // Calculate start and end dates for the selected month
           const fromDate = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}-01`;

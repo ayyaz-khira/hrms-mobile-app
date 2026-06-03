@@ -45,10 +45,7 @@ export default function GatePassScreen() {
 
       // Smart Auth Header
       const rawToken = token.trim();
-      let authHeader = rawToken;
-      if (!rawToken.toLowerCase().startsWith('token ') && !rawToken.toLowerCase().startsWith('bearer ')) {
-        authHeader = rawToken.includes(':') ? `token ${rawToken}` : rawToken;
-      }
+      const authHeader = rawToken.toLowerCase().startsWith('bearer ') ? rawToken : `Bearer ${rawToken}`;
 
       const response = await fetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_gate_pass', {
         credentials: 'include',
@@ -78,6 +75,7 @@ export default function GatePassScreen() {
   const C = {
     primary: '#4361EE',
     primaryLight: '#EEF2FF',
+    danger: '#EF4444',
     bg: isDarkMode ? '#0F172A' : '#F8F9FB',
     card: isDarkMode ? '#1E293B' : '#FFFFFF',
     text: isDarkMode ? '#F8F9FB' : '#0F172A',
@@ -172,7 +170,7 @@ export default function GatePassScreen() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': token,
+          'Authorization': token.toLowerCase().startsWith('bearer ') ? token : `Bearer ${token}`,
           'Accept': 'application/json',
           'X-Requested-With': 'XMLHttpRequest'
         },

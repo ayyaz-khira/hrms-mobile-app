@@ -1,22 +1,25 @@
-import React, { useState, useRef } from 'react';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { router } from 'expo-router';
+import React, { useRef, useState } from 'react';
+import { useLeaveStore } from '../store/leaveStore';
 import {
-  View,
+  ActivityIndicator,
+  Animated,
+  Dimensions,
+  Image,
+  Keyboard,
+  Platform,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  ScrollView,
-  StyleSheet,
-  Animated,
-  ActivityIndicator,
-  Keyboard,
-  Platform,
-  StatusBar,
-  Dimensions,
-  Image,
+  View,
+  Modal,
+  Clipboard,
 } from 'react-native';
-import { router } from 'expo-router';
-import { IconSymbol } from '@/components/ui/icon-symbol';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width } = Dimensions.get('window');
 
@@ -98,9 +101,35 @@ export default function NessScaleLogin() {
   const [emailError, setEmailError] = useState(false);
   const [passError, setPassError] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [checkingAuth, setCheckingAuth] = useState(true);
   const [toast, setToast] = useState({ visible: false, message: '', isSuccess: false });
+  const [diagnostics, setDiagnostics] = useState<any>(null);
+  const [showDiagModal, setShowDiagModal] = useState(false);
 
   const toastTimerRef = useRef<any>(null);
+
+  React.useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const token = await AsyncStorage.getItem('user_token');
+        const userId = await AsyncStorage.getItem('user_id');
+        if (token && userId) {
+          try {
+            await useLeaveStore.getState().fetchRoles(userId);
+          } catch (rErr) {
+            console.error('Failed to pre-fetch roles:', rErr);
+          }
+          router.replace('/(tabs)/home');
+          return;
+        }
+      } catch (err) {
+        console.error('Error checking auth state:', err);
+      } finally {
+        setCheckingAuth(false);
+      }
+    };
+    checkAuth();
+  }, []);
 
   const showToast = (message: string, isSuccess = false) => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
@@ -138,11 +167,12 @@ export default function NessScaleLogin() {
     Keyboard.dismiss();
     if (!validate()) return;
     setLoading(true);
+    setDiagnostics(null);
 
     try {
-      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'https://staging.microcrispr.com/api/method/hrms_application.api.mobile_login';
+      const apiUrl = 'https://staging.microcrispr.com/api/method/hrms_application.api.mobile_login';
       const response = await fetch(apiUrl, {
-        credentials: 'include',
+        credentials: 'omit',
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -155,59 +185,71 @@ export default function NessScaleLogin() {
       });
 
       const result = await response.json();
-      if (response.ok) {
-        console.log('🔑 Full login response:', result);
-        const message = result.message || result;
+      console.warn('🔑 [DEBUG] Login response status:', response.status, 'Body:', result);
 
-        // Ensure we actually got a token or valid response before proceeding
-        if (!message.token && message !== 'authenticated' && !result.token) {
-          showToast(message.message || message || 'Invalid credentials', false);
+      if (response.ok && result.message && result.message.status === 'success') {
+        const token = result.message.token;
+        if (!token) {
+          console.warn('❌ [DEBUG] Token is missing from successful login response!');
+          setDiagnostics({ loginUrl: apiUrl, loginStatus: response.status, loginBody: result, error: 'Token missing' });
+          showToast('Failed to retrieve token from server', false);
           setLoading(false);
           return;
         }
-
-        // Priority: 1. API Key/Secret (Permanent), 2. Session Token (Temporary)
-        let token = (message.api_key && message.api_secret)
-          ? `${message.api_key}:${message.api_secret}`
-          : (message.token || result.token || 'authenticated');
-
-        // Standardize: Ensure API key/secret has 'token ' prefix for all future requests
-        if (message.api_key && message.api_secret && !token.startsWith('token ')) {
-          token = `token ${token}`;
-        }
-
-        console.log('🔑 Token Captured:', token.substring(0, 15) + '...');
+        
+        console.warn('🔑 [DEBUG] Token Captured:', token);
         await AsyncStorage.setItem('user_token', token);
 
-        // Since login didn't provide user details, we MUST fetch them now using the token
+        // Fetch all user details including roles using the new GET API
         try {
-          const detailsResponse = await fetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_employee_details', {
-        credentials: 'include',
-            method: 'POST',
+          const detailsUrl = 'https://staging.microcrispr.com/api/method/hrms_application.api.get_user_details';
+          const detailsResponse = await fetch(detailsUrl, {
+            credentials: 'omit',
+            method: 'GET',
             headers: {
-              'Authorization': token,
+              'Authorization': token.trim().replace(/^(bearer|token)\s+/i, ''),
               'Content-Type': 'application/json',
               'Accept': 'application/json',
-              'X-Requested-With': 'XMLHttpRequest',
-            },
-            body: JSON.stringify({ email: email.trim() })
+            }
           });
 
           const detailsResult = await detailsResponse.json();
-          const empData = detailsResult.message;
+          console.warn('📡 [DEBUG] User details response status:', detailsResponse.status, 'Body:', detailsResult);
 
-          if (empData) {
-            console.log('🆔 Found Employee ID:', empData.name);
-            await AsyncStorage.setItem('user_id', empData.name);
-            await AsyncStorage.setItem('user_name', empData.employee_name || email.split('@')[0]);
-            await AsyncStorage.setItem('employee_details', JSON.stringify(empData));
+          if (!detailsResponse.ok) {
+            const detailError = detailsResult.message || detailsResult.exception || 'Unauthorized to fetch user details';
+            console.error('❌ [DEBUG] User details fetch failed:', detailError);
+            setDiagnostics({ loginUrl: apiUrl, loginStatus: response.status, loginBody: result, detailsUrl, detailsStatus: detailsResponse.status, detailsBody: detailsResult, error: detailError });
+            showToast(`Auth verification failed: ${detailError}`, false);
+            await AsyncStorage.multiRemove(['user_token', 'user_id', 'employee_details']);
+            setLoading(false);
+            return;
+          }
+
+          const userData = detailsResult.message || detailsResult;
+          if (userData && (userData.email || userData.name || userData.employee)) {
+            console.warn('🆔 Found User Data for:', userData.email || userData.name);
+            const userId = userData.employee || userData.name || email.trim();
+            const userName = userData.employee_name || userData.first_name || email.split('@')[0];
+            
+            await AsyncStorage.setItem('user_id', userId);
+            await AsyncStorage.setItem('user_name', userName);
+            await AsyncStorage.setItem('employee_details', JSON.stringify(userData));
+            
+            // Set roles in global store immediately
+            const roles = userData.roles || [];
+            useLeaveStore.getState().setRoles(roles);
           } else {
-            // Fallback if details fetch fails
+            console.warn('⚠️ [DEBUG] User data structure not recognized:', userData);
             await AsyncStorage.setItem('user_id', email.trim());
           }
-        } catch (err) {
+        } catch (err: any) {
           console.error('Failed to fetch details after login:', err);
-          await AsyncStorage.setItem('user_id', email.trim());
+          setDiagnostics({ loginUrl: apiUrl, loginStatus: response.status, loginBody: result, detailsUrl: 'https://staging.microcrispr.com/api/method/hrms_application.api.get_user_details', error: err.message || err });
+          showToast(`Network error validating session: ${err.message || err}`, false);
+          await AsyncStorage.multiRemove(['user_token', 'user_id', 'employee_details']);
+          setLoading(false);
+          return;
         }
 
         showToast('Login Successful', true);
@@ -215,15 +257,43 @@ export default function NessScaleLogin() {
           router.replace('/(tabs)/home');
         }, 500);
       } else {
-        showToast(result.message || 'Invalid credentials', false);
+        // Attempt to extract Frappe server error messages
+        let errorMsg = 'Invalid credentials';
+        if (result._server_messages) {
+          try {
+            const parsedMsgs = JSON.parse(result._server_messages);
+            const firstMsg = parsedMsgs[0];
+            if (firstMsg && firstMsg.message) {
+              errorMsg = firstMsg.message.replace(/<[^>]*>/g, ''); // strip HTML tags
+            }
+          } catch (e) {
+             console.error('Error parsing _server_messages:', e);
+          }
+        } else {
+           errorMsg = result.message?.message || result.message || 'Invalid credentials';
+        }
+        
+        console.error('❌ Login Failed. Reason:', errorMsg);
+        setDiagnostics({ loginUrl: apiUrl, loginStatus: response.status, loginBody: result, error: errorMsg });
+        showToast(errorMsg, false);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Login Error:', error);
+      setDiagnostics({ loginUrl: 'https://staging.microcrispr.com/api/method/hrms_application.api.mobile_login', error: error.message || error });
       showToast('Network error. Please try again.', false);
     } finally {
       setLoading(false);
     }
   };
+
+  if (checkingAuth) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color={C.primary} />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor={C.white} />
@@ -311,7 +381,16 @@ export default function NessScaleLogin() {
             )}
           </TouchableOpacity>
 
-
+          {diagnostics && (
+            <TouchableOpacity
+              style={styles.diagBtn}
+              onPress={() => setShowDiagModal(true)}
+              activeOpacity={0.8}
+            >
+              <IconSymbol name="info.circle.fill" size={14} color={C.danger} />
+              <Text style={styles.diagBtnText}>View Authentication Diagnostics</Text>
+            </TouchableOpacity>
+          )}
 
           <View style={styles.helpRow}>
             <Text style={styles.helpText}>Need help? </Text>
@@ -321,6 +400,83 @@ export default function NessScaleLogin() {
           </View>
         </ScrollView>
       </View>
+
+      <Modal
+        visible={showDiagModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowDiagModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Auth Diagnostics</Text>
+              <TouchableOpacity
+                onPress={() => setShowDiagModal(false)}
+                style={styles.modalCloseBtn}
+              >
+                <Text style={styles.modalCloseText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.modalBody} contentContainerStyle={styles.modalBodyContent}>
+              <Text style={styles.diagIntro}>
+                Detailed response logs from the auth server to help troubleshoot issues:
+              </Text>
+
+              {diagnostics?.error && (
+                <View style={styles.diagErrorCard}>
+                  <Text style={styles.diagSectionTitle}>Error Message</Text>
+                  <Text style={styles.diagErrorText}>{diagnostics.error}</Text>
+                </View>
+              )}
+
+              <View style={styles.diagSection}>
+                <Text style={styles.diagSectionTitle}>1. Login API Call</Text>
+                <Text style={styles.diagLabel}>Endpoint: <Text style={styles.diagValue}>{diagnostics?.loginUrl}</Text></Text>
+                <Text style={styles.diagLabel}>Status Code: <Text style={styles.diagValue}>{diagnostics?.loginStatus}</Text></Text>
+                <Text style={styles.diagLabel}>Response Payload:</Text>
+                <ScrollView horizontal style={styles.codeScroll}>
+                  <Text style={styles.codeBlock}>
+                    {diagnostics?.loginBody ? JSON.stringify(diagnostics.loginBody, null, 2) : 'No response payload'}
+                  </Text>
+                </ScrollView>
+              </View>
+
+              {diagnostics?.detailsUrl && (
+                <View style={styles.diagSection}>
+                  <Text style={styles.diagSectionTitle}>2. User Details Verification Call</Text>
+                  <Text style={styles.diagLabel}>Endpoint: <Text style={styles.diagValue}>{diagnostics.detailsUrl}</Text></Text>
+                  <Text style={styles.diagLabel}>Status Code: <Text style={styles.diagValue}>{diagnostics.detailsStatus}</Text></Text>
+                  <Text style={styles.diagLabel}>Request Headers:</Text>
+                  <ScrollView horizontal style={styles.codeScroll}>
+                    <Text style={styles.codeBlock}>
+                      {JSON.stringify({ Authorization: diagnostics.loginBody?.message?.token || 'MISSING' }, null, 2)}
+                    </Text>
+                  </ScrollView>
+                  <Text style={styles.diagLabel}>Response Payload:</Text>
+                  <ScrollView horizontal style={styles.codeScroll}>
+                    <Text style={styles.codeBlock}>
+                      {diagnostics.detailsBody ? JSON.stringify(diagnostics.detailsBody, null, 2) : 'No response payload'}
+                    </Text>
+                  </ScrollView>
+                </View>
+              )}
+            </ScrollView>
+
+            <TouchableOpacity
+              style={styles.copyBtn}
+              onPress={() => {
+                const dump = JSON.stringify(diagnostics, null, 2);
+                Clipboard.setString(dump);
+                showToast('Diagnostics copied', true);
+              }}
+            >
+              <Text style={styles.copyBtnText}>Copy Full Diagnostics JSON</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       <Toast {...toast} />
     </View>
@@ -476,7 +632,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.35,
     shadowRadius: 10,
     elevation: 6,
-    elevation: 6,
     minHeight: 44,
   },
   loginBtnText: {
@@ -564,5 +719,139 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     textAlign: 'center',
+  },
+  diagBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(201, 42, 42, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(201, 42, 42, 0.2)',
+    borderRadius: 12,
+    paddingVertical: 10,
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  diagBtnText: {
+    color: C.danger,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: C.white,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '85%',
+    paddingBottom: Platform.OS === 'ios' ? 34 : 24,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: C.gray200,
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: C.gray900,
+  },
+  modalCloseBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    backgroundColor: C.gray100,
+    borderRadius: 8,
+  },
+  modalCloseText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: C.gray700,
+  },
+  modalBody: {
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+  },
+  modalBodyContent: {
+    paddingBottom: 24,
+  },
+  diagIntro: {
+    fontSize: 13,
+    color: C.gray600,
+    lineHeight: 18,
+    marginBottom: 16,
+  },
+  diagErrorCard: {
+    backgroundColor: 'rgba(201, 42, 42, 0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(201, 42, 42, 0.15)',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 16,
+  },
+  diagErrorText: {
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    fontSize: 12,
+    color: C.danger,
+    fontWeight: '600',
+    marginTop: 4,
+  },
+  diagSection: {
+    marginBottom: 20,
+    backgroundColor: C.gray50,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: C.gray200,
+    padding: 14,
+  },
+  diagSectionTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: C.gray800,
+    marginBottom: 10,
+  },
+  diagLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: C.gray500,
+    marginTop: 8,
+    marginBottom: 2,
+  },
+  diagValue: {
+    color: C.gray800,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    fontWeight: '600',
+  },
+  codeScroll: {
+    backgroundColor: C.gray900,
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 4,
+  },
+  codeBlock: {
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    fontSize: 11,
+    color: '#A5D6A7',
+  },
+  copyBtn: {
+    backgroundColor: C.primary,
+    marginHorizontal: 20,
+    marginTop: 10,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  copyBtnText: {
+    color: C.white,
+    fontSize: 13,
+    fontWeight: '800',
   },
 });

@@ -1,214 +1,163 @@
-import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Dimensions, Platform, StatusBar } from 'react-native';
+import React, { useCallback } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Dimensions, StatusBar, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useTheme } from '../../context/ThemeContext';
+import { useLeaveStore } from '../../store/leaveStore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width } = Dimensions.get('window');
 
+const getLeaveColor = (type: string, index: number) => {
+  const colors = ['#4361EE', '#FF9800', '#2EC4B6', '#E71D36', '#9C27B0', '#00F5D4', '#7209B7'];
+  return colors[index % colors.length];
+};
+
+const getStatusColor = (status: string) => {
+  switch (status) {
+    case 'Approved': return '#10B981';
+    case 'Rejected': return '#EF4444';
+    case 'Pending': return '#F59E0B';
+    default: return '#4361EE';
+  }
+};
+
 export default function LeaveTrackerScreen() {
-   const { isDarkMode } = useTheme();
-   const [leaveData, setLeaveData] = useState({
-      casual: { used: 2, total: 12 },
-      sick: { used: 1, total: 8 },
-      privilege: { used: 5, total: 15 },
-      compOff: { used: 0, total: 4 },
-      requests: []
-   });
+  const { isDarkMode } = useTheme();
+  const { width: screenWidth } = useWindowDimensions();
+  const { leaveBalances, myRequests, fetchLeaveBalances, fetchMyRequests, roles } = useLeaveStore();
+  const isApprover = roles.includes('Leave Approver');
+  const useCompactActions = isApprover && screenWidth < 390;
 
   useFocusEffect(
     useCallback(() => {
-      const fetchLeave = async () => {
-        try {
-          const token = await AsyncStorage.getItem('user_token');
-          const userId = await AsyncStorage.getItem('user_id');
-
-          if (!token || !userId) return;
-
-          const rawToken = token.trim();
-          let authHeader = rawToken;
-          if (!rawToken.toLowerCase().startsWith('token ') && !rawToken.toLowerCase().startsWith('bearer ')) {
-            authHeader = rawToken.includes(':') ? `token ${rawToken}` : rawToken;
-          }
-
-          const commonHeaders = {
-            'Authorization': authHeader,
-            'sid': authHeader,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'X-Requested-With': 'XMLHttpRequest',
-          };
-
-          // 1. Fetch Leave Balance (via employee details)
-          const detailsResponse = await fetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_employee_details', {
-        credentials: 'include',
-            method: 'POST',
-            headers: commonHeaders,
-            body: JSON.stringify({ employee: userId.trim() })
-          });
-
-          if (detailsResponse.ok) {
-            const detailsResult = await detailsResponse.json();
-            const details = detailsResult.message;
-            if (details && details.leave_details) {
-              setLeaveData(prev => ({ 
-                ...prev, 
-                casual: details.leave_details.casual || prev.casual,
-                sick: details.leave_details.sick || prev.sick,
-                privilege: details.leave_details.privilege || prev.privilege,
-                compOff: details.leave_details.compensatory_off || prev.compOff
-              }));
-            }
-          }
-
-          // 2. Fetch Leave Applications (Requests List)
-          const requestsResponse = await fetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_leave_applications', {
-        credentials: 'include',
-            method: 'POST',
-            headers: commonHeaders,
-            body: JSON.stringify({ employee: userId.trim() })
-          });
-
-          if (requestsResponse.ok) {
-            const requestsResult = await requestsResponse.json();
-            const message = requestsResult.message;
-            console.log("📥 Leave Data Received:", JSON.stringify(message).substring(0, 100) + "...");
-            
-            // The logs show data is inside message.data
-            const logs = message?.data || (Array.isArray(message) ? message : []);
-            console.log("📥 Leave Requests Count:", logs.length);
-            
-            if (Array.isArray(logs)) {
-               const mapped = logs.map((l: any) => ({
-                  type: l.leave_type || 'Leave Request',
-                  range: `${l.from_date} - ${l.to_date}`,
-                  days: `${l.total_leave_days} days`,
-                  status: l.status || 'Pending',
-                  statusColor: l.status === 'Approved' ? '#4CAF50' : (l.status === 'Rejected' ? '#F44336' : '#FF9800'),
-                  bgColor: l.status === 'Approved' ? '#E8F5E9' : (l.status === 'Rejected' ? '#FFEBEE' : '#FFF3E0')
-               }));
-               // Show last 3 in Active Requests
-               setLeaveData(prev => ({ ...prev, requests: mapped.slice(0, 3) }));
-            }
-          }
-        } catch (e) {
-          console.error('Failed to fetch leave data', e);
+      const loadLeaveData = async () => {
+        const userId = await AsyncStorage.getItem('user_id');
+        if (userId) {
+          await fetchLeaveBalances(userId);
+          await fetchMyRequests(userId);
         }
       };
-
-      fetchLeave();
+      loadLeaveData();
     }, [])
   );
 
-   const C = {
-      primary: '#4361EE',
-      success: '#10B981',
-      danger: '#EF4444',
-      warning: '#F59E0B',
-      bg: isDarkMode ? '#0B0E14' : '#F8F9FB',
-      card: isDarkMode ? '#161B22' : '#FFFFFF',
-      text: isDarkMode ? '#F8F9FB' : '#212529',
-      subText: isDarkMode ? '#94A3B8' : '#64748B',
-      white: '#FFFFFF',
-      dark: isDarkMode ? '#050505' : '#1B1B2F',
-      gray50: isDarkMode ? '#1F2937' : '#F8F9FA',
-      gray100: isDarkMode ? '#374151' : '#F1F3F5',
-   };
-   return (
-      <View style={[styles.mainContainer, { backgroundColor: C.bg }]}>
-         <StatusBar barStyle="light-content" backgroundColor={C.dark} />
+  const C = {
+    primary: '#4361EE',
+    success: '#10B981',
+    danger: '#EF4444',
+    warning: '#F59E0B',
+    bg: isDarkMode ? '#0B0E14' : '#F8F9FB',
+    card: isDarkMode ? '#161B22' : '#FFFFFF',
+    text: isDarkMode ? '#F8F9FB' : '#212529',
+    subText: isDarkMode ? '#94A3B8' : '#64748B',
+    white: '#FFFFFF',
+    dark: isDarkMode ? '#050505' : '#1B1B2F',
+    gray50: isDarkMode ? '#1F2937' : '#F8F9FA',
+    gray100: isDarkMode ? '#374151' : '#F1F3F5',
+  };
 
-         {/* Fixed Header */}
-         <View style={styles.headerContainer}>
-            <View style={[styles.headerBg, { backgroundColor: C.dark }]}>
-               <SafeAreaView edges={['top']}>
-                  <View style={styles.headerRow}>
-                     <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-                        <IconSymbol name="arrow.left" size={24} color="#FFFFFF" />
-                     </TouchableOpacity>
-                     <Text style={styles.headerTitle}>Leave Tracker</Text>
-                     <View style={{ width: 40 }} />
+  // Safe defaults if store is empty
+  const balances = leaveBalances.length > 0 ? leaveBalances : [
+    { leave_type: 'Casual', leaves_taken: 2, max_leaves: 12, balance: 10 },
+    { leave_type: 'Sick', leaves_taken: 1, max_leaves: 8, balance: 7 },
+    { leave_type: 'Privilege', leaves_taken: 5, max_leaves: 15, balance: 10 },
+    { leave_type: 'Comp Off', leaves_taken: 0, max_leaves: 4, balance: 4 }
+  ];
+
+  return (
+    <View style={[styles.mainContainer, { backgroundColor: C.bg }]}>
+      <StatusBar barStyle="light-content" backgroundColor={C.dark} />
+
+      {/* Fixed Header */}
+      <View style={styles.headerContainer}>
+        <View style={[styles.headerBg, { backgroundColor: C.dark }]}>
+          <SafeAreaView edges={['top']}>
+            <View style={styles.headerRow}>
+              <TouchableOpacity onPress={() => router.replace('/home')} style={styles.backBtn}>
+                <IconSymbol name="arrow.left" size={24} color="#FFFFFF" />
+              </TouchableOpacity>
+              <Text style={styles.headerTitle}>Leave Tracker</Text>
+              <View style={{ width: 40 }} />
+            </View>
+          </SafeAreaView>
+        </View>
+      </View>
+
+      <ScrollView
+        style={styles.content}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingTop: 20, paddingBottom: 120 }}
+      >
+        <View style={styles.summaryGrid}>
+          {balances.map((bal, idx) => (
+            <View key={idx} style={[styles.summaryCard, { backgroundColor: getLeaveColor(bal.leave_type, idx) }]}>
+              <Text style={styles.summaryLabel}>{bal.leave_type}</Text>
+              <Text style={styles.summaryValue}>{bal.leaves_taken}/{bal.max_leaves}</Text>
+              <Text style={styles.summarySub}>Remaining: {bal.balance || (bal.max_leaves - bal.leaves_taken)}</Text>
+            </View>
+          ))}
+        </View>
+
+        <View style={[styles.actionRow, useCompactActions && styles.compactActionRow]}>
+          <TouchableOpacity style={[styles.mainAction, useCompactActions && styles.compactMainAction, { backgroundColor: C.primary }]} onPress={() => router.push('/apply-leave')}>
+            <IconSymbol name="plus" size={22} color="#FFFFFF" />
+            <Text style={styles.mainActionText}>Apply New Leave</Text>
+          </TouchableOpacity>
+          {/* Approver‑only button */}
+          {isApprover && (
+            <TouchableOpacity
+              style={[styles.mainAction, useCompactActions && styles.compactMainAction, { backgroundColor: C.success }]}
+              onPress={() => router.push('/approvals')}>
+              <IconSymbol name="checkmark.seal.fill" size={22} color="#FFFFFF" />
+              <Text style={styles.mainActionText}>Approve Leaves</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity style={[styles.sideAction, useCompactActions && styles.compactSideAction, { backgroundColor: C.card }]} onPress={() => router.push('/leave-history')}>
+            <IconSymbol name="list.bullet.indent" size={20} color={C.primary} />
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.sectionHeader}>
+          <Text style={[styles.sectionTitle, { color: C.text }]}>Active Requests</Text>
+        </View>
+
+        <View style={styles.requestList}>
+          {myRequests.length === 0 ? (
+            <View style={[styles.emptyCard, { backgroundColor: C.card }]}>
+              <IconSymbol name="calendar.badge.exclamationmark" size={32} color={C.gray100} />
+              <Text style={[styles.emptyText, { color: C.subText }]}>No active leave requests</Text>
+            </View>
+          ) : (
+            myRequests.slice(0, 3).map((item, i) => {
+              const statusColor = getStatusColor(item.status);
+              return (
+                <View key={i} style={[styles.requestCard, { backgroundColor: C.card }]}>
+                  <View style={styles.requestTop}>
+                    <View>
+                      <Text style={[styles.requestType, { color: C.text }]}>{item.leave_type}</Text>
+                      <Text style={[styles.requestRange, { color: C.subText }]}>{item.from_date} - {item.to_date}</Text>
+                    </View>
+                    <View style={[styles.statusBadge, { backgroundColor: statusColor + '15' }]}>
+                      <Text style={[styles.statusText, { color: statusColor }]}>{item.status}</Text>
+                    </View>
                   </View>
-               </SafeAreaView>
-            </View>
-         </View>
-
-         <ScrollView
-            style={styles.content}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ paddingTop: 20, paddingBottom: 120 }}
-         >
-            <View style={styles.summaryGrid}>
-               <View style={[styles.summaryCard, { backgroundColor: '#4361EE' }]}>
-                  <Text style={styles.summaryLabel}>Casual</Text>
-                  <Text style={styles.summaryValue}>{leaveData.casual.used}/{leaveData.casual.total}</Text>
-                  <Text style={styles.summarySub}>Remaining</Text>
-               </View>
-               <View style={[styles.summaryCard, { backgroundColor: '#FF9800' }]}>
-                  <Text style={styles.summaryLabel}>Sick</Text>
-                  <Text style={styles.summaryValue}>{leaveData.sick.used}/{leaveData.sick.total}</Text>
-                  <Text style={styles.summarySub}>Remaining</Text>
-               </View>
-               <View style={[styles.summaryCard, { backgroundColor: '#2EC4B6' }]}>
-                  <Text style={styles.summaryLabel}>Privilege</Text>
-                  <Text style={styles.summaryValue}>{leaveData.privilege.used}/{leaveData.privilege.total}</Text>
-                  <Text style={styles.summarySub}>Remaining</Text>
-               </View>
-               <View style={[styles.summaryCard, { backgroundColor: '#E71D36' }]}>
-                  <Text style={styles.summaryLabel}>Comp Off</Text>
-                  <Text style={styles.summaryValue}>{leaveData.compOff.used}/{leaveData.compOff.total}</Text>
-                  <Text style={styles.summarySub}>Remaining</Text>
-               </View>
-            </View>
-
-            <View style={styles.actionRow}>
-               <TouchableOpacity style={[styles.mainAction, { backgroundColor: C.primary }]} onPress={() => router.push('/apply-leave')}>
-                  <IconSymbol name="plus" size={24} color="#FFFFFF" />
-                  <Text style={styles.mainActionText}>Apply New Leave</Text>
-               </TouchableOpacity>
-               <TouchableOpacity style={[styles.sideAction, { backgroundColor: C.card }]} onPress={() => router.push('/leave-history')}>
-                  <IconSymbol name="list.bullet.indent" size={20} color={C.primary} />
-               </TouchableOpacity>
-            </View>
-
-            <View style={styles.sectionHeader}>
-               <Text style={[styles.sectionTitle, { color: C.text }]}>Active Requests</Text>
-            </View>
-
-            <View style={styles.requestList}>
-               {leaveData.requests.length === 0 ? (
-                  <View style={[styles.emptyCard, { backgroundColor: C.card }]}>
-                     <IconSymbol name="calendar.badge.exclamationmark" size={32} color={C.gray100} />
-                     <Text style={[styles.emptyText, { color: C.subText }]}>No active leave requests</Text>
+                  <View style={[styles.divider, { backgroundColor: C.gray100 }]} />
+                  <View style={styles.requestBottom}>
+                    <View style={styles.metaItem}>
+                      <IconSymbol name="clock.fill" size={14} color={C.subText} />
+                      <Text style={[styles.metaText, { color: C.subText }]}>{item.total_leave_days} days</Text>
+                    </View>
+                    <TouchableOpacity onPress={() => router.push('/leave-history')}>
+                      <Text style={[styles.detailsText, { color: C.primary }]}>View Details</Text>
+                    </TouchableOpacity>
                   </View>
-               ) : (
-                  leaveData.requests.map((item, i) => (
-                     <View key={i} style={[styles.requestCard, { backgroundColor: C.card }]}>
-                     <View style={styles.requestTop}>
-                        <View>
-                           <Text style={[styles.requestType, { color: C.text }]}>{item.type}</Text>
-                           <Text style={[styles.requestRange, { color: C.subText }]}>{item.range}</Text>
-                        </View>
-                        <View style={[styles.statusBadge, { backgroundColor: item.statusColor + '15' }]}>
-                           <Text style={[styles.statusText, { color: item.statusColor }]}>{item.status}</Text>
-                        </View>
-                     </View>
-                     <View style={[styles.divider, { backgroundColor: C.gray100 }]} />
-                     <View style={styles.requestBottom}>
-                        <View style={styles.metaItem}>
-                           <IconSymbol name="clock.fill" size={14} color={C.subText} />
-                           <Text style={[styles.metaText, { color: C.subText }]}>{item.days}</Text>
-                        </View>
-                        <TouchableOpacity onPress={() => router.push('/leave-history')}>
-                           <Text style={[styles.detailsText, { color: C.primary }]}>View Details</Text>
-                        </TouchableOpacity>
-                     </View>
-                  </View>
-               ))
-            )}
-         </View>
+                </View>
+              );
+            })
+          )}
+        </View>
 
             <View style={styles.sectionHeader}>
                <Text style={[styles.sectionTitle, { color: C.text }]}>Leave Calendar</Text>
@@ -248,9 +197,12 @@ const styles = StyleSheet.create({
    summaryValue: { color: '#FFFFFF', fontSize: 22, fontWeight: '900', marginBottom: 4 },
    summarySub: { color: 'rgba(255,255,255,0.6)', fontSize: 10, fontWeight: '600' },
    actionRow: { flexDirection: 'row', gap: 12, paddingHorizontal: 20, marginTop: 25 },
-   mainAction: { flex: 1, height: 60, borderRadius: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, elevation: 4 },
-   mainActionText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800' },
+   compactActionRow: { flexWrap: 'wrap' },
+   mainAction: { flex: 1, minWidth: 0, minHeight: 60, borderRadius: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 8, elevation: 4 },
+   compactMainAction: { flexBasis: (width - 52) / 2, height: 64 },
+   mainActionText: { flexShrink: 1, color: '#FFFFFF', fontSize: 14, lineHeight: 17, fontWeight: '800', textAlign: 'center' },
    sideAction: { width: 60, height: 60, borderRadius: 20, alignItems: 'center', justifyContent: 'center', elevation: 2 },
+   compactSideAction: { flex: 1, height: 48 },
    sectionHeader: { paddingHorizontal: 20, marginTop: 30, marginBottom: 15 },
    sectionTitle: { fontSize: 16, fontWeight: '800' },
    requestList: { paddingHorizontal: 20, gap: 15 },

@@ -24,7 +24,7 @@ export default function ExpenseScreen() {
 
         const response = await fetch(`${apiUrl}/employee/expenses`, {
           headers: {
-            'Authorization': token ? `Bearer ${token}` : '',
+            'Authorization': token ? token.trim().replace(/^(bearer|token)\s+/i, '') : '',
             'Accept': 'application/json',
           }
         });

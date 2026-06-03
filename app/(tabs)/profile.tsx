@@ -1,17 +1,18 @@
-import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, Dimensions, Platform, StatusBar, Image, Modal, Pressable } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { router, useFocusEffect } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
+import { router, useFocusEffect } from 'expo-router';
+import React, { useCallback, useState } from 'react';
+import { Dimensions, Image, Modal, Pressable, ScrollView, StatusBar, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../context/ThemeContext';
+import { useLeaveStore } from '../../store/leaveStore';
 
 const { width } = Dimensions.get('window');
 
 export default function ProfileScreen() {
   const { isDarkMode, toggleTheme } = useTheme();
-  const [userName, setUserName] = useState('Harsh Rajput');
+  const [userName, setUserName] = useState('');
   const [profileImage, setProfileImage] = useState<string | null>(null);
   const [imagePickerVisible, setImagePickerVisible] = useState(false);
   const [employeeDetails, setEmployeeDetails] = useState<any>(null);
@@ -21,13 +22,7 @@ export default function ProfileScreen() {
     const rawToken = await AsyncStorage.getItem('user_token');
     if (!rawToken) return null;
     const token = rawToken.trim();
-    if (token.toLowerCase().startsWith('token ') || token.toLowerCase().startsWith('bearer ')) {
-      return token;
-    }
-    if (token.includes(':')) {
-      return `token ${token}`;
-    }
-    return token; // fallback to raw
+    return token.replace(/^(bearer|token)\s+/i, '');
   };
 
   useFocusEffect(
@@ -36,7 +31,7 @@ export default function ProfileScreen() {
         try {
           const savedName = await AsyncStorage.getItem('user_name');
           if (savedName) setUserName(savedName);
-          
+
           const savedImage = await AsyncStorage.getItem('profile_image');
           if (savedImage) setProfileImage(savedImage);
 
@@ -47,7 +42,7 @@ export default function ProfileScreen() {
             console.log('Profile: Fetching details for:', userId, 'Header:', authHeader);
             setLoading(true);
             const response = await fetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_employee_details', {
-        credentials: 'include',
+              credentials: 'include',
               method: 'POST',
               headers: {
                 'Authorization': authHeader,
@@ -112,6 +107,19 @@ export default function ProfileScreen() {
     }
   };
 
+  const clearStore = useLeaveStore((state) => state.clearStore);
+
+  const handleLogout = async () => {
+    try {
+      await AsyncStorage.multiRemove(['user_token', 'user_id', 'user_name', 'profile_image']);
+      clearStore();
+    } catch (error) {
+      console.error('Error during logout:', error);
+    } finally {
+      router.replace('/');
+    }
+  };
+
   const C = {
     primary: '#4361EE',
     bg: isDarkMode ? '#0B0E14' : '#F8F9FB',
@@ -145,7 +153,7 @@ export default function ProfileScreen() {
             <View style={styles.headerRow}>
               <View style={{ width: 40 }} />
               <Text style={styles.headerTitle}>My Profile</Text>
-              <TouchableOpacity style={styles.logoutIconBtn} onPress={() => router.replace('/')}>
+              <TouchableOpacity style={styles.logoutIconBtn} onPress={handleLogout}>
                 <IconSymbol name="arrow.right.to.line" size={20} color="#FF5A5F" />
               </TouchableOpacity>
             </View>
@@ -178,7 +186,7 @@ export default function ProfileScreen() {
         <View style={styles.statsGrid}>
           <View style={[styles.statItem, { backgroundColor: C.card }]}>
             <Text style={[styles.statValue, { color: C.text }]}>
-              {employeeDetails?.date_of_joining 
+              {employeeDetails?.date_of_joining
                 ? new Date(employeeDetails.date_of_joining).toLocaleDateString([], { day: '2-digit', month: 'short' })
                 : '-- --'}
             </Text>

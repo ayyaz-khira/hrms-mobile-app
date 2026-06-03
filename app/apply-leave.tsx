@@ -6,6 +6,7 @@ import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../context/ThemeContext';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import { leaveApi } from '../services/leaveApi';
 
 const { width, height } = Dimensions.get('window');
 
@@ -18,6 +19,26 @@ const LEAVE_TYPES = [
   { label: 'Compensatory Off', icon: 'clock.fill', color: '#4CAF50' },
   { label: 'Unpaid Leave', icon: 'doc.fill', color: '#9C27B0' }
 ];
+
+const getLeaveIcon = (name: string) => {
+  const lower = name.toLowerCase();
+  if (lower.includes('sick')) return 'bed.fill';
+  if (lower.includes('casual')) return 'calendar';
+  if (lower.includes('privilege') || lower.includes('earned')) return 'star.fill';
+  if (lower.includes('compensatory') || lower.includes('comp')) return 'clock.fill';
+  if (lower.includes('maternity')) return 'person.2.fill';
+  return 'doc.fill';
+};
+
+const getLeaveColor = (name: string) => {
+  const lower = name.toLowerCase();
+  if (lower.includes('sick')) return '#F44336';
+  if (lower.includes('casual')) return '#FF9800';
+  if (lower.includes('privilege') || lower.includes('earned')) return '#3F51B5';
+  if (lower.includes('compensatory') || lower.includes('comp')) return '#4CAF50';
+  if (lower.includes('maternity')) return '#E91E63';
+  return '#9C27B0';
+};
 
 export default function ApplyLeaveScreen() {
   const { isDarkMode } = useTheme();
@@ -34,6 +55,39 @@ export default function ApplyLeaveScreen() {
   const [pickerVisible, setPickerVisible] = useState(false);
   const [pickerType, setPickerType] = useState<'start' | 'end' | 'type' | 'mailing'>('start');
   const [showNativeDatePicker, setShowNativeDatePicker] = useState(false);
+
+  const [dynamicLeaveTypes, setDynamicLeaveTypes] = useState<any[]>(LEAVE_TYPES);
+  const [approvers, setApprovers] = useState<any[]>([]);
+  const [loadingConfig, setLoadingConfig] = useState(true);
+
+  React.useEffect(() => {
+    const loadConfig = async () => {
+      try {
+        const types = await leaveApi.getLeaveTypes();
+        if (types && types.length > 0) {
+          const mapped = types.map((t: any) => ({
+            label: t.leave_type_name || t.name,
+            icon: getLeaveIcon(t.leave_type_name || t.name),
+            color: getLeaveColor(t.leave_type_name || t.name)
+          }));
+          setDynamicLeaveTypes(mapped);
+          if (mapped[0]) setLeaveType(mapped[0].label);
+        }
+      } catch (err) {
+        console.warn('Failed to load dynamic leave types:', err);
+      }
+
+      try {
+        const apps = await leaveApi.getLeaveApprovers();
+        setApprovers(apps || []);
+      } catch (err) {
+        console.warn('Failed to load leave approvers:', err);
+      } finally {
+        setLoadingConfig(false);
+      }
+    };
+    loadConfig();
+  }, []);
 
   const formatDate = (date: Date) => {
     const y = date.getFullYear();
@@ -59,9 +113,9 @@ export default function ApplyLeaveScreen() {
     border: isDarkMode ? '#334155' : '#E2E8F0',
   };
 
-  const openPicker = (type: 'start' | 'end' | 'type') => {
+  const openPicker = (type: 'start' | 'end' | 'type' | 'mailing') => {
     setPickerType(type);
-    if (type === 'type') {
+    if (type === 'type' || type === 'mailing') {
       setPickerVisible(true);
     } else {
       setShowNativeDatePicker(true);
@@ -100,7 +154,7 @@ export default function ApplyLeaveScreen() {
       // Critical Checks
       if (!token) {
         Alert.alert('Login Required', 'Please login again to submit leave.', [
-          { text: 'OK', onPress: () => router.replace('/login') }
+          { text: 'OK', onPress: () => router.replace('/') }
         ]);
         return;
       }
@@ -133,7 +187,7 @@ export default function ApplyLeaveScreen() {
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
-          'Authorization': token,                    // ← Main format (working in Postman)
+          'Authorization': token.trim().replace(/^(bearer|token)\s+/i, ''),
         },
         body: JSON.stringify(payload),
       });
@@ -155,7 +209,7 @@ export default function ApplyLeaveScreen() {
 
       if (response.ok) {
         Alert.alert('Success', 'Your leave request has been submitted successfully!', [
-          { text: 'OK', onPress: () => router.back() }
+          { text: 'OK', onPress: () => router.canGoBack() ? router.back() : router.replace('/leave') }
         ]);
       } else {
         const errorMsg = result?.message ||
@@ -167,7 +221,7 @@ export default function ApplyLeaveScreen() {
 
         if (errorMsg.toString().includes('Invalid Token') || response.status === 401) {
           Alert.alert('Session Expired', 'Your session has expired. Please login again.', [
-            { text: 'Login', onPress: () => router.replace('/login') }
+            { text: 'Login', onPress: () => router.replace('/') }
           ]);
         } else {
           Alert.alert('Submission Failed', typeof errorMsg === 'string' ? errorMsg : JSON.stringify(errorMsg));
@@ -189,7 +243,7 @@ export default function ApplyLeaveScreen() {
         <View style={[styles.headerBg, { backgroundColor: C.dark }]}>
           <SafeAreaView edges={['top']}>
             <View style={styles.headerRow}>
-              <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+              <TouchableOpacity onPress={() => router.canGoBack() ? router.back() : router.replace('/leave')} style={styles.backBtn}>
                 <IconSymbol name="arrow.left" size={24} color="#FFFFFF" />
               </TouchableOpacity>
               <Text style={styles.headerTitle}>Apply Leave</Text>
@@ -267,10 +321,7 @@ export default function ApplyLeaveScreen() {
 
           <TouchableOpacity 
             style={[styles.typeSelect, { backgroundColor: C.gray50, borderColor: C.gray100, marginBottom: 0 }]} 
-            onPress={() => {
-              setPickerType('mailing');
-              setPickerVisible(true);
-            }}
+            onPress={() => openPicker('mailing')}
           >
             <View>
               <Text style={[styles.dateLabel, { color: C.gray600 }]}>Approver / Recipient</Text>
@@ -342,19 +393,19 @@ export default function ApplyLeaveScreen() {
         </Modal>
       )}
 
-      {/* Picker Modal for Leave Type */}
+      {/* Picker Modal */}
       <Modal visible={pickerVisible} transparent animationType="fade">
         <Pressable style={styles.modalOverlay} onPress={() => setPickerVisible(false)}>
           <View style={[styles.pickerContainer, { backgroundColor: C.white }]}>
             <View style={styles.pickerHeader}>
               <Text style={[styles.pickerTitle, { color: C.gray900 }]}>
-                {pickerType === 'type' ? 'Select Leave Type' : 'Add Approver Name'}
+                {pickerType === 'type' ? 'Select Leave Type' : 'Select Leave Approver'}
               </Text>
             </View>
 
             {pickerType === 'type' ? (
               <FlatList
-                data={LEAVE_TYPES}
+                data={dynamicLeaveTypes}
                 keyExtractor={(item) => item.label}
                 renderItem={({ item }) => (
                   <TouchableOpacity
@@ -374,22 +425,52 @@ export default function ApplyLeaveScreen() {
                 )}
               />
             ) : (
-              <View style={{ padding: 20 }}>
-                <TextInput
-                  style={[styles.textArea, { height: 50, backgroundColor: C.gray50, borderColor: C.gray100, color: C.gray900, marginBottom: 20 }]}
-                  placeholder="Enter approver name..."
-                  placeholderTextColor={C.gray400}
-                  value={mailingTo === 'Select Person' ? '' : mailingTo}
-                  onChangeText={setMailingTo}
-                  autoFocus
-                />
-                <TouchableOpacity 
-                  style={[styles.submitBtn, { marginHorizontal: 0, height: 50, borderRadius: 12 }]}
-                  onPress={() => setPickerVisible(false)}
-                >
-                  <Text style={styles.submitBtnText}>Done</Text>
-                </TouchableOpacity>
-              </View>
+              <FlatList
+                data={approvers}
+                keyExtractor={(item) => item.name || item.email}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={styles.typeItem}
+                    onPress={() => {
+                      setMailingTo(item.employee_name || item.name);
+                      setMailingToEmail(item.email || item.name);
+                      setPickerVisible(false);
+                    }}
+                  >
+                    <View style={[styles.typeIcon, { backgroundColor: C.primary + '20' }]}>
+                      <IconSymbol name="person.fill" size={20} color={C.primary} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.typeLabel, { color: C.gray900 }]}>{item.employee_name || item.name}</Text>
+                      <Text style={[styles.dateLabel, { color: C.gray400 }]}>{item.email}</Text>
+                    </View>
+                    {mailingToEmail === (item.email || item.name) && (
+                      <IconSymbol name="checkmark" size={20} color={C.primary} />
+                    )}
+                  </TouchableOpacity>
+                )}
+                ListEmptyComponent={
+                  <View style={{ padding: 20 }}>
+                    <TextInput
+                      style={[styles.textArea, { height: 50, backgroundColor: C.gray50, borderColor: C.gray100, color: C.gray900, marginBottom: 20 }]}
+                      placeholder="Enter approver name or email..."
+                      placeholderTextColor={C.gray400}
+                      value={mailingTo === 'Select Person' ? '' : mailingTo}
+                      onChangeText={(val) => {
+                        setMailingTo(val);
+                        setMailingToEmail(val);
+                      }}
+                      autoFocus
+                    />
+                    <TouchableOpacity 
+                      style={[styles.submitBtn, { marginHorizontal: 0, height: 50, borderRadius: 12 }]}
+                      onPress={() => setPickerVisible(false)}
+                    >
+                      <Text style={styles.submitBtnText}>Done</Text>
+                    </TouchableOpacity>
+                  </View>
+                }
+              />
             )}
           </View>
         </Pressable>

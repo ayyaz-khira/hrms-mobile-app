@@ -24,10 +24,7 @@ export default function LeaveHistoryScreen() {
 
       // Smart Auth Header
       const rawToken = token.trim();
-      let authHeader = rawToken;
-      if (!rawToken.toLowerCase().startsWith('token ') && !rawToken.toLowerCase().startsWith('bearer ')) {
-        authHeader = rawToken.includes(':') ? `token ${rawToken}` : rawToken;
-      }
+      const authHeader = rawToken.replace(/^(bearer|token)\s+/i, '');
 
       const response = await fetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_leave_applications', {
         credentials: 'include',

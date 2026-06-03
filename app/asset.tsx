@@ -29,7 +29,7 @@ export default function AssetScreen() {
         credentials: 'include',
           method: 'POST',
           headers: {
-            'Authorization': token || '',
+            'Authorization': token ? (token.toLowerCase().startsWith('bearer ') ? token : `Bearer ${token}`) : '',
             'Content-Type': 'application/json',
             'Accept': 'application/json',
           },
@@ -64,7 +64,7 @@ export default function AssetScreen() {
         credentials: 'include',
         method: 'POST',
         headers: {
-          'Authorization': token || '',
+          'Authorization': token ? (token.toLowerCase().startsWith('bearer ') ? token : `Bearer ${token}`) : '',
           'Content-Type': 'application/json',
           'Accept': 'application/json',
         },

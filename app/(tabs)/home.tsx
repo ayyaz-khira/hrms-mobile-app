@@ -1,22 +1,21 @@
-import React, { useState, useCallback } from 'react';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { router, useFocusEffect } from 'expo-router';
+import React, { useCallback, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  Dimensions,
-  StatusBar,
-  Platform,
-  Modal,
-  Pressable,
   Alert,
-  ActivityIndicator,
+  Dimensions,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { IconSymbol } from '@/components/ui/icon-symbol';
-import { router, useFocusEffect } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../../context/ThemeContext';
 
 const { width } = Dimensions.get('window');
@@ -40,7 +39,7 @@ export default function HomeScreen() {
     bg: isDarkMode ? '#0B0E14' : '#F8F9FB',
   };
 
-  const [userName, setUserName] = useState('Harsh');
+  const [userName, setUserName] = useState('');
   const [isCalendarVisible, setIsCalendarVisible] = useState(false);
   const [selectedDay, setSelectedDay] = useState<number | null>(null);
   const [dashboardData, setDashboardData] = useState({
@@ -57,25 +56,12 @@ export default function HomeScreen() {
   const [allAttendance, setAllAttendance] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // ====================== SMART AUTH SYSTEM ======================
   const getAuthHeader = async (): Promise<string | null> => {
     const rawToken = await AsyncStorage.getItem('user_token');
     if (!rawToken) return null;
 
     const token = rawToken.trim();
-    
-    // 1. If it already has a prefix, use it as is
-    if (token.toLowerCase().startsWith('token ') || token.toLowerCase().startsWith('bearer ')) {
-      return token;
-    }
-
-    // 2. If it has a colon, it's an API Key -> use 'token'
-    if (token.includes(':')) {
-      return `token ${token}`;
-    } 
-    
-    // 3. If it's a single hash, send it RAW (no prefix). This is required for session-based tokens.
-    return token;
+    return token.replace(/^(bearer|token)\s+/i, '');
   };
 
   // ====================== LOAD DASHBOARD ======================
