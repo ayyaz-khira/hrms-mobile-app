@@ -1,15 +1,14 @@
-import { Tabs, router, useSegments } from 'expo-router';
-import React, { useEffect } from 'react';
-import { Platform, View, TouchableOpacity, StyleSheet, Text, Dimensions, Modal, Pressable } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { GestureDetector, Gesture } from 'react-native-gesture-handler';
-import { runOnJS } from 'react-native-reanimated';
-import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
+import { Tabs, router, useSegments } from 'expo-router';
+import React from 'react';
+import { Dimensions, Modal, Platform, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { runOnJS } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../context/ThemeContext';
 import { useLeaveStore } from '../../store/leaveStore';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width } = Dimensions.get('window');
 
@@ -32,6 +31,10 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
     itemBg: isDarkMode ? '#334155' : '#F8F9FA',
   };
 
+  // revert to slightly more opaque light pill background
+  const pillBg = isDarkMode ? 'rgba(15,23,42,0.6)' : 'rgba(242,244,246,0.95)';
+  const pillBorder = isDarkMode ? 'rgba(255,255,255,0.04)' : 'rgba(16,24,40,0.06)';
+
   const menuItems = [
     { label: 'Leave History', icon: 'list.bullet.indent', color: '#5C6BC0', path: '/leave-history' },
     { label: 'Apply Leave', icon: 'bed.fill', color: '#42A5F5', path: '/apply-leave' },
@@ -46,142 +49,97 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
   };
 
   return (
-    <View style={styles.tabBarContainer}>
-      <Modal
-        visible={menuVisible}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setMenuVisible(false)}
-      >
-        <Pressable 
-          style={styles.modalOverlay} 
-          onPress={() => setMenuVisible(false)}
+      <View style={styles.tabBarContainer}>
+        <Modal
+          visible={menuVisible}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setMenuVisible(false)}
         >
-          <View style={[styles.menuContainer, { bottom: 100 + insets.bottom, backgroundColor: C.card }]}>
-            {menuItems.map((item, index) => (
-              <TouchableOpacity 
-                key={index} 
-                style={[
-                  styles.menuItem,
-                  { backgroundColor: C.card },
-                  index !== menuItems.length - 1 && { borderBottomColor: C.border, borderBottomWidth: 1 }
-                ]}
-                onPress={() => {
-                   setMenuVisible(false);
-                   if (item.path) {
-                     router.push(item.path as any);
-                   }
-                }}
-              >
-                <View style={[styles.menuIconContainer, { backgroundColor: C.itemBg }]}>
-                  <IconSymbol name={item.icon as any} size={20} color={item.color} />
-                </View>
-                <Text style={[styles.menuItemLabel, { color: C.text }]}>{item.label}</Text>
-                <IconSymbol name="chevron.right" size={16} color={C.subText} />
-              </TouchableOpacity>
-            ))}
-          </View>
-        </Pressable>
-      </Modal>
-
-      {/* Background Shape with Cutout */}
-      <View style={[styles.tabBarBackground, { height: 60 + insets.bottom, backgroundColor: C.bg, borderTopColor: C.border }]}>
-        <View style={styles.tabBarCutoutContainer}>
-          <View style={[styles.tabBarCutout, { backgroundColor: C.bg }]} />
-        </View>
-      </View>
-
-      {/* Floating Action Button */}
-      <TouchableOpacity 
-        style={[styles.fab, menuVisible && styles.fabActive, { backgroundColor: C.bg }]} 
-        activeOpacity={0.8}
-        onPress={toggleMenu}
-      >
-        <View style={[styles.fabInner, menuVisible && styles.fabInnerActive]}>
-          <IconSymbol name={menuVisible ? "xmark" : "plus"} size={24} color="#FFFFFF" />
-        </View>
-        {!menuVisible && <Text style={[styles.fabLabel, { color: C.subText }]}>Apply</Text>}
-      </TouchableOpacity>
-
-      <View style={[styles.tabsRow, { bottom: Platform.OS === 'ios' ? insets.bottom : 5 }]}>
-        {(() => {
-          const visibleRoutes = state.routes.filter((route: any) => {
-            if (route.name === 'pending-approvals' || route.name === 'hod-approvals') return false;
-            // Always hide the Approvals tab from the bottom navigation bar
-            if (route.name === 'approvals') return false;
-            return true;
-          });
-
-          const fabSpaceIndex = Math.floor(visibleRoutes.length / 2);
-
-          return visibleRoutes.map((route: any, index: number) => {
-            const { options } = descriptors[route.key];
-            const label = options.title !== undefined ? options.title : route.name;
-            const isFocused = state.routes[state.index]?.name === route.name;
-
-            const getIcon = () => {
-              switch (route.name) {
-                case 'home': return 'square.grid.2x2.fill';
-                case 'attend': return 'calendar';
-                case 'leave': return 'bed.fill';
-                case 'approvals': return 'checkmark.seal.fill';
-                case 'profile': return 'person.fill';
-                default: return 'house.fill';
-              }
-            };
-
-            return (
-              <React.Fragment key={route.key}>
-                {index === fabSpaceIndex && <View style={styles.fabSpace} />}
-                
+          <Pressable style={styles.modalOverlay} onPress={() => setMenuVisible(false)}>
+            <View style={[styles.menuContainer, { bottom: 100 + insets.bottom, backgroundColor: C.card }]}>
+              {menuItems.map((item, index) => (
                 <TouchableOpacity
-                  onPress={() => navigation.navigate(route.name)}
-                  style={styles.tabItem}
-                  activeOpacity={0.7}
+                  key={index}
+                  style={[
+                    styles.menuItem,
+                    { backgroundColor: C.card },
+                    index !== menuItems.length - 1 && { borderBottomColor: C.border, borderBottomWidth: 1 },
+                  ]}
+                  onPress={() => {
+                    setMenuVisible(false);
+                    if (item.path) router.push(item.path as any);
+                  }}
                 >
-                  <IconSymbol 
-                    size={22} 
-                    name={getIcon() as any} 
-                    color={isFocused ? C.primary : C.subText} 
-                  />
-                  <Text 
-                    style={[
-                      styles.tabLabel, 
-                      { 
-                        color: isFocused ? C.primary : C.subText,
-                        fontWeight: isFocused ? '800' : '600'
-                      }
-                    ]}
-                    numberOfLines={1}
-                  >
-                    {label}
-                  </Text>
+                  <View style={[styles.menuIconContainer, { backgroundColor: C.itemBg }]}> 
+                    <IconSymbol name={item.icon as any} size={20} color={item.color} />
+                  </View>
+                  <Text style={[styles.menuItemLabel, { color: C.text }]}>{item.label}</Text>
+                  <IconSymbol name="chevron.right" size={16} color={C.subText} />
                 </TouchableOpacity>
-              </React.Fragment>
-            );
-          });
-        })()}
+              ))}
+            </View>
+          </Pressable>
+        </Modal>
+
+        <View style={[styles.pillContainer, { bottom: Platform.OS === 'ios' ? insets.bottom + 18 : insets.bottom + 16, backgroundColor: pillBg, borderColor: pillBorder }]}> 
+          {(() => {
+            const visibleRoutes = state.routes.filter((route: any) => {
+              if (route.name === 'pending-approvals' || route.name === 'hod-approvals') return false;
+              if (route.name === 'approvals') return false;
+              return true;
+            });
+
+            return visibleRoutes.map((route: any, index: number) => {
+              const { options } = descriptors[route.key];
+              const label = options.title !== undefined ? options.title : route.name;
+              const isFocused = state.routes[state.index]?.name === route.name;
+
+              const getIcon = () => {
+                switch (route.name) {
+                  case 'home': return 'square.grid.2x2.fill';
+                  case 'attend': return 'calendar';
+                  case 'leave': return 'bed.fill';
+                  case 'approvals': return 'checkmark.seal.fill';
+                  case 'profile': return 'person.fill';
+                  default: return 'house.fill';
+                }
+              };
+
+              return (
+                <TouchableOpacity
+                  key={route.key}
+                  onPress={() => navigation.navigate(route.name)}
+                  style={styles.pillTabItem}
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityLabel={label}
+                >
+                  <View style={styles.pillIconWrap}> 
+                    <IconSymbol size={20} name={getIcon() as any} color={isFocused ? C.primary : C.subText} />
+                  </View>
+                    <Text style={[styles.tabLabel, { marginTop: 2, color: isFocused ? C.primary : C.subText, fontWeight: isFocused ? '800' : '600' }]} numberOfLines={1}>{label}</Text>
+                </TouchableOpacity>
+              );
+            });
+          })()}
+        </View>
       </View>
-    </View>
-  );
-}
+    );
+  }
 
 export default function TabLayout() {
   const segments = useSegments();
-
-  // Load roles once on component mount
+  const roles = useLeaveStore((state) => state.roles);
+  // fetch roles on mount
   const fetchRoles = useLeaveStore((state) => state.fetchRoles);
-  useEffect(() => {
+  React.useEffect(() => {
     const load = async () => {
       const userId = await AsyncStorage.getItem('user_id');
-      if (userId) {
-        await fetchRoles(userId);
-      }
+      if (userId) await fetchRoles(userId);
     };
     load();
   }, []);
-
-  const roles = useLeaveStore((state) => state.roles);
   const isApprover = roles.includes('Leave Approver');
   const isHod = roles.includes('HOD') || roles.includes('Department Head');
 
@@ -239,9 +197,12 @@ const styles = StyleSheet.create({
   tabsRow: { position: 'absolute', left: 0, right: 0, flexDirection: 'row', height: 60, alignItems: 'center', justifyContent: 'space-around', paddingHorizontal: 10 },
   tabItem: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 2 },
   tabLabel: { fontSize: 8.5, fontWeight: '700', letterSpacing: -0.2 },
+  pillContainer: { position: 'absolute', left: 18, right: 18, height: 70, borderRadius: 22, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingHorizontal: 10, borderWidth: 1, shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.06, shadowRadius: 12, elevation: 8 },
+  pillTabItem: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 6 },
+  pillIconWrap: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   fabSpace: { width: 60 },
-  fab: { position: 'absolute', top: -55, left: width / 2 - 28, width: 56, height: 56, borderRadius: 28, padding: 5, elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 6, zIndex: 10, alignItems: 'center' },
-  fabInner: { width: '100%', height: '100%', borderRadius: 24, backgroundColor: '#3F51B5', alignItems: 'center', justifyContent: 'center' },
+  fab: { position: 'absolute', width: 60, height: 60, borderRadius: 30, padding: 6, elevation: 30, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.25, shadowRadius: 16, zIndex: 9999, alignItems: 'center' },
+  fabInner: { width: '100%', height: '100%', borderRadius: 30, backgroundColor: '#3F51B5', alignItems: 'center', justifyContent: 'center' },
   fabActive: { backgroundColor: 'transparent', shadowOpacity: 0, elevation: 0 },
   fabInnerActive: { backgroundColor: '#FF5A5F', borderWidth: 0 },
   fabLabel: { fontSize: 10, fontWeight: '700', marginTop: 5 },

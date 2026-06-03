@@ -1,10 +1,10 @@
-import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Dimensions, Platform, StatusBar, Modal, Pressable } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { router, useFocusEffect } from 'expo-router';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { useTheme } from '../../context/ThemeContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { router, useFocusEffect } from 'expo-router';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Dimensions, Modal, Pressable, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useTheme } from '../../context/ThemeContext';
 
 const { width } = Dimensions.get('window');
 
@@ -17,6 +17,7 @@ export default function AttendanceDetailsScreen() {
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [attendanceLogs, setAttendanceLogs] = useState<any[]>([]);
+  const [checkinsMap, setCheckinsMap] = useState<Record<string, any>>({});
   const [dayDetails, setDayDetails] = useState<any>(null);
 
   const getLocalDateStr = (d: Date) => {
@@ -28,13 +29,19 @@ export default function AttendanceDetailsScreen() {
       const fetchAttendance = async () => {
         setLoading(true);
         try {
-          const token = await AsyncStorage.getItem('user_token');
+          const rawToken = await AsyncStorage.getItem('user_token');
           const userId = await AsyncStorage.getItem('user_id');
 
-          if (!token || !userId) return;
+          if (!rawToken || !userId) return;
 
-          const rawToken = token.trim();
-          const authHeader = rawToken.toLowerCase().startsWith('bearer ') ? rawToken : `Bearer ${rawToken}`;
+          const authHeader = rawToken.trim().replace(/^(bearer|token)\s+/i, '');
+          const commonHeaders: any = {
+            Authorization: authHeader,
+            sid: !authHeader.toLowerCase().includes('token') ? authHeader : undefined,
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+          };
           
           // Calculate start and end dates for the selected month
           const fromDate = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}-01`;
@@ -42,18 +49,100 @@ export default function AttendanceDetailsScreen() {
 
           // Fetch Attendance Status - using only this API per user request
           const attendRes = await fetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_attendance', {
-        credentials: 'include',
+            credentials: 'include',
             method: 'POST',
-            headers: { 'Authorization': authHeader, 'sid': authHeader, 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+            headers: commonHeaders,
             body: JSON.stringify({ employee: userId.trim(), from_date: fromDate, to_date: toDate })
           });
 
           let finalAttendLogs = [];
-          if (attendRes.ok) {
-            const result = await attendRes.json();
-            finalAttendLogs = result.message?.data || [];
-            console.log('Attendance Log Sample:', finalAttendLogs[0]);
-            setAttendanceLogs(finalAttendLogs);
+          let status: number | null = null;
+          if (attendRes) {
+            try {
+              status = attendRes.status;
+              const result = await attendRes.json().catch(() => ({}));
+              finalAttendLogs = result.message?.data || [];
+              console.log('Attendance fetch status:', status, 'logs:', finalAttendLogs.length, finalAttendLogs[0]);
+              setAttendanceLogs(finalAttendLogs);
+            } catch (e) {
+              console.warn('Failed parsing attendance response', e);
+            }
+            if (status === 417 || status === 401) {
+              console.warn('Session expired while fetching attendance', status);
+              await AsyncStorage.multiRemove(['user_token', 'user_id', 'employee_details']);
+              router.replace('/');
+              return;
+            }
+          }
+
+          // Also fetch employee check-ins (used by dashboard) to derive IN/OUT when attendance API lacks times
+          try {
+            const checkRes = await fetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_employee_checkins', {
+              credentials: 'include',
+              method: 'POST',
+              headers: commonHeaders,
+              body: JSON.stringify({ employee: userId.trim() })
+            });
+
+            if (checkRes) {
+              try {
+                const checkStatus = checkRes.status;
+                const checkData = await checkRes.json().catch(() => ({}));
+                const extractLogs = (res: any): any[] => {
+                if (!res) return [];
+                if (Array.isArray(res)) return res;
+                if (Array.isArray(res.message)) return res.message;
+                if (res.message?.data && Array.isArray(res.message.data)) return res.message.data;
+                if (res.message?.logs && Array.isArray(res.message.logs)) return res.message.logs;
+                if (res.data && Array.isArray(res.data)) return res.data;
+                return [];
+              };
+
+              const rawLogs = extractLogs(checkData) || [];
+              const map: Record<string, any> = {};
+              rawLogs.forEach((l: any) => {
+                const timeVal = l.time || l.timestamp || l.log_time || l.created_at || l.date;
+                if (!timeVal) return;
+                const d = new Date(timeVal);
+                if (isNaN(d.getTime())) return;
+                const dateKey = getLocalDateStr(d);
+                if (!map[dateKey]) map[dateKey] = { in: null, out: null, inRaw: null, outRaw: null, entries: [] };
+                const entry = map[dateKey];
+                const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                const type = (l.log_type || l.type || '').toString().toUpperCase();
+                entry.entries.push({ type, timeStr, raw: l });
+
+                if (type === 'IN' || !entry.inRaw || d < entry.inRaw) {
+                  if (entry.inRaw && d < entry.inRaw && !entry.outRaw) {
+                    entry.out = entry.in;
+                    entry.outRaw = entry.inRaw;
+                  }
+                  entry.in = timeStr;
+                  entry.inRaw = d;
+                }
+
+                if (type === 'OUT' || !entry.outRaw || d > entry.outRaw) {
+                  if (!entry.inRaw || d > entry.inRaw) {
+                    entry.out = timeStr;
+                    entry.outRaw = d;
+                  }
+                }
+              });
+              console.log('Checkins fetch status:', checkStatus, 'logs:', rawLogs.length);
+              console.log('Checkins map built:', map);
+              setCheckinsMap(map);
+              if (checkStatus === 417 || checkStatus === 401) {
+                console.warn('Session expired while fetching checkins', checkStatus);
+                await AsyncStorage.multiRemove(['user_token', 'user_id', 'employee_details']);
+                router.replace('/');
+                return;
+              }
+              } catch (e) {
+                console.warn('Failed parsing checkins response', e);
+              }
+            }
+          } catch (e) {
+            console.warn('Failed to fetch checkins fallback', e);
           }
 
 
@@ -61,7 +150,6 @@ export default function AttendanceDetailsScreen() {
           const totalDaysInMonth = new Date(selectedYear, selectedMonth + 1, 0).getDate();
           let lateCount = 0;
           const presentDates = new Set();
-          
           const getHours = (str: string | null) => {
             if (!str || str === '--:--') return 0;
             const parts = str.includes(':') ? str.split(':') : str.split(' ');
@@ -106,7 +194,7 @@ export default function AttendanceDetailsScreen() {
           setStats({ 
             present: presentDates.size, 
             absent: absents, 
-            late: lateCount 
+            late: lateCount
           });
         } catch (e) {
           console.error('Failed to fetch attendance', e);
@@ -132,6 +220,11 @@ export default function AttendanceDetailsScreen() {
     dark: isDarkMode ? '#050505' : '#1B1B2F',
     gray50: isDarkMode ? '#1F2937' : '#F8F9FA',
     gray100: isDarkMode ? '#374151' : '#F1F3F5',
+    // softer/tinted icon colors
+    primarySoft: '#4361EEAA',
+    successSoft: '#10B981AA',
+    dangerSoft: '#EF4444AA',
+    warningSoft: '#F59E0BAA',
   };
 
   const months = [
@@ -182,37 +275,57 @@ export default function AttendanceDetailsScreen() {
   };
 
   // Merge details for the current day
-  const getSelectedDayDetails = () => {
-    const dateStr = getLocalDateStr(new Date(selectedYear, selectedMonth, selectedDay));
-    const attendLog = attendanceLogs.find(l => l.attendance_date === dateStr);
-    
-    const formatTime = (timeStr: string | null | undefined) => {
-       if (!timeStr || timeStr === '--:--') return '--:--';
-       // If it contains space (like '2026-05-09 08:47:26'), take the part after space
-       const parts = timeStr.trim().split(' ');
-       const timeOnly = parts.length > 1 ? parts[1] : parts[0];
-       
-       // If it's in HH:MM:SS format, strip the seconds and optionally add AM/PM if not present
-       // But wait, the API might already be returning 08:47 AM from our toLocaleTimeString
-       return timeOnly.substring(0, 5) + (timeOnly.length > 5 ? '' : ''); // Simplified
-    };
+    const getSelectedDayDetails = () => {
+     const dateStr = getLocalDateStr(new Date(selectedYear, selectedMonth, selectedDay));
+     // Try exact match first, then fallback to parsing attendance_date
+     let attendLog = attendanceLogs.find(l => l.attendance_date === dateStr);
+     if (!attendLog) {
+      attendLog = attendanceLogs.find(l => {
+        if (!l.attendance_date) return false;
+        try {
+         const d = new Date(l.attendance_date);
+         return d.getFullYear() === selectedYear && d.getMonth() === selectedMonth && d.getDate() === selectedDay;
+        } catch (e) {
+         return false;
+        }
+      });
+     }
 
-    // Use a more robust time formatter that matches home.tsx style
-    const cleanTime = (raw: string | null | undefined) => {
-       if (!raw || raw === '--:--') return '--:--';
-       if (raw.includes('AM') || raw.includes('PM')) return raw; // Already formatted
-       
-       // If it's a full timestamp '2024-05-08 09:00:00'
-       if (raw.length > 10 && raw.includes(' ')) {
-          const t = raw.split(' ')[1];
-          const [h, m] = t.split(':');
-          const hr = parseInt(h);
-          const ampm = hr >= 12 ? 'PM' : 'AM';
-          const h12 = hr % 12 || 12;
-          return `${h12.toString().padStart(2, '0')}:${m} ${ampm}`;
+     const normalize = (timeStr: string | null | undefined) => {
+       if (!timeStr) return null;
+       // Convert ISO 'T' separators to space, trim
+       const t = timeStr.replace('T', ' ').trim();
+       return t;
+     };
+
+     const formatTime = (timeStr: string | null | undefined) => {
+       const raw = normalize(timeStr);
+       if (!raw || raw === '--:--' || raw === '-') return '--:--';
+       // Split by space to handle '2026-05-09 08:47:26' or '08:47:26' or '08:47 AM'
+       const parts = raw.split(' ');
+       const timeOnly = parts.length > 1 ? parts[1] : parts[0];
+       // If it's HH:MM:SS or HH:MM, return HH:MM
+       const mm = timeOnly.substring(0,5);
+       return mm;
+     };
+
+     // Use a more robust time formatter that matches home.tsx style
+     const cleanTime = (raw: string | null | undefined) => {
+       const n = normalize(raw);
+       if (!n || n === '--:--' || n === '-') return '--:--';
+       if (n.includes('AM') || n.includes('PM')) return n; // Already formatted
+       // If it's a full timestamp '2024-05-08 09:00:00' or ISO '2024-05-08T09:00:00'
+       if (n.length > 5 && (n.includes(' ') || n.includes('T'))) {
+         const parts = n.split(' ');
+         const timePart = parts.length > 1 ? parts[1] : parts[0];
+         const [h, m] = timePart.split(':');
+         const hr = parseInt(h);
+         const ampm = hr >= 12 ? 'PM' : 'AM';
+         const h12 = hr % 12 || 12;
+         return `${h12.toString().padStart(2, '0')}:${m} ${ampm}`;
        }
-       return raw;
-    };
+       return n;
+     };
 
     const calculateHours = (inT: string | null | undefined, outT: string | null | undefined) => {
        if (!inT || !outT || inT === '--:--' || outT === '--:--') return '--:--';
@@ -240,23 +353,97 @@ export default function AttendanceDetailsScreen() {
        }
     };
 
-    const inTime = cleanTime(attendLog?.in_time);
-    const outTime = cleanTime(attendLog?.out_time);
-    const apiWorkingHours = attendLog?.total_working_hours && attendLog.total_working_hours !== '--:--' 
+    // Primary source: attendance API
+    let inTime = cleanTime(attendLog?.in_time);
+    let outTime = cleanTime(attendLog?.out_time);
+    let apiWorkingHours = attendLog?.total_working_hours && attendLog.total_working_hours !== '--:--' 
        ? attendLog.total_working_hours 
        : calculateHours(inTime, outTime);
+
+    // Fallback: if attendance API didn't provide in/out, try checkins map
+    if ((!inTime || inTime === '--:--' || inTime === '-') && checkinsMap) {
+      const ck = checkinsMap[getLocalDateStr(new Date(selectedYear, selectedMonth, selectedDay))];
+      if (ck) {
+        inTime = inTime && inTime !== '--:--' ? inTime : (ck.in || '--:--');
+        outTime = outTime && outTime !== '--:--' ? outTime : (ck.out || '--:--');
+        apiWorkingHours = apiWorkingHours && apiWorkingHours !== '--:--' ? apiWorkingHours : calculateHours(inTime, outTime);
+      }
+    }
 
     return {
       in_time: inTime,
       out_time: outTime,
       working_hours: apiWorkingHours,
       shift: attendLog?.shift || 'G Shift',
-      status: attendLog?.status || 'none'
+      status: attendLog?.status || 'none',
+      raw: attendLog || null
     };
   };
 
   const dayDetailsMerged = getSelectedDayDetails();
   const weekDays = getWeekDays();
+  const [dynamicWork, setDynamicWork] = useState<string | null>(null);
+
+  useEffect(() => {
+    let timer: any = null;
+
+    const isTodaySelected = (() => {
+      const today = new Date();
+      return today.getFullYear() === selectedYear && today.getMonth() === selectedMonth && today.getDate() === selectedDay;
+    })();
+
+    const parseInToDate = (inStr: string | null) => {
+      if (!inStr || inStr === '--:--' || inStr === '-') return null;
+      const parts = inStr.trim().split(' ');
+      const timePart = parts[0];
+      const ampm = parts[1] ? parts[1].toUpperCase() : null;
+      const [hhRaw, mmRaw] = timePart.split(':');
+      let hh = parseInt(hhRaw || '0');
+      const mm = parseInt(mmRaw || '0');
+      if (ampm === 'PM' && hh < 12) hh += 12;
+      if (ampm === 'AM' && hh === 12) hh = 0;
+      return new Date(selectedYear, selectedMonth, selectedDay, hh, mm, 0);
+    };
+
+    const update = () => {
+      if (!isTodaySelected) {
+        setDynamicWork(null);
+        return;
+      }
+      const inStr = dayDetailsMerged.in_time;
+      const outStr = dayDetailsMerged.out_time;
+      if (!inStr || inStr === '--:--' || inStr === '-') {
+        setDynamicWork(null);
+        return;
+      }
+
+      // If checked out, show static working hours
+      if (outStr && outStr !== '--:--' && outStr !== '-') {
+        setDynamicWork(dayDetailsMerged.working_hours);
+        return;
+      }
+
+      const inDate = parseInToDate(inStr);
+      if (!inDate) {
+        setDynamicWork(null);
+        return;
+      }
+
+      const now = new Date();
+      let diff = Math.max(0, now.getTime() - inDate.getTime());
+      const hrs = Math.floor(diff / (1000 * 60 * 60));
+      const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+      const secs = Math.floor((diff % (1000 * 60)) / 1000);
+      setDynamicWork(`${String(hrs).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`);
+    };
+
+    update();
+    if (isTodaySelected && dayDetailsMerged.in_time && (!dayDetailsMerged.out_time || dayDetailsMerged.out_time === '--:--' || dayDetailsMerged.out_time === '-')) {
+      timer = setInterval(update, 1000);
+    }
+
+    return () => { if (timer) clearInterval(timer); };
+  }, [selectedDay, selectedMonth, selectedYear, attendanceLogs, dayDetailsMerged.in_time, dayDetailsMerged.out_time]);
 
   const handleWeekNav = (direction: number) => {
     const baseDate = new Date(selectedYear, selectedMonth, selectedDay);
@@ -362,17 +549,19 @@ export default function AttendanceDetailsScreen() {
       <StatusBar barStyle="light-content" backgroundColor={C.dark} />
       
       <View style={styles.headerContainer}>
-        <View style={[styles.headerBg, { backgroundColor: C.dark }]}>
+        <View style={[styles.headerBg, { backgroundColor: C.card }]}>
           <SafeAreaView edges={['top']}>
             <View style={styles.headerRow}>
-              <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-                <IconSymbol name="arrow.left" size={24} color="#FFFFFF" />
+              <TouchableOpacity onPress={() => router.back()} style={[styles.backBtn, { backgroundColor: C.gray50 }]}>
+                <IconSymbol name="arrow.left" size={20} color={C.primarySoft} />
               </TouchableOpacity>
-              <Text style={styles.headerTitle}>Attendance Tracker</Text>
+              <Text style={[styles.headerTitle, { color: C.text }]}>Attendance Tracker</Text>
               <View style={{ width: 40 }} />
             </View>
           </SafeAreaView>
         </View>
+
+        
       </View>
 
       <ScrollView 
@@ -380,16 +569,16 @@ export default function AttendanceDetailsScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingTop: 20, paddingBottom: 120 }}
       >
-        <View style={styles.monthHeader}>
-           <TouchableOpacity 
-             style={[styles.monthSelector, { backgroundColor: C.card }]}
+          <View style={styles.monthHeader}>
+            <TouchableOpacity 
+             style={[styles.monthSelector, { backgroundColor: C.card, borderColor: C.gray100, borderWidth: 1 }]}
              onPress={() => setMonthPickerVisible(true)}
-           >
-              <IconSymbol name="calendar" size={16} color={C.primary} />
+            >
+              <IconSymbol name="calendar" size={16} color={C.primarySoft} />
               <Text style={[styles.monthText, { color: C.text }]}>{months[selectedMonth]} {selectedYear}</Text>
               <IconSymbol name="chevron.down" size={14} color={C.subText} />
-           </TouchableOpacity>
-        </View>
+            </TouchableOpacity>
+          </View>
 
         <View style={[styles.calendarCard, { backgroundColor: C.card }]}>
           <View style={styles.weekContainer}>
@@ -408,8 +597,8 @@ export default function AttendanceDetailsScreen() {
                     <TouchableOpacity 
                       style={[
                         styles.dateCircle,
-                        day.isToday && { borderColor: C.primary, borderWidth: 1.5 },
                         selectedDay === day.date && { backgroundColor: C.primary },
+                        day.isToday && selectedDay !== day.date && { borderColor: C.primary, borderWidth: 1.2 },
                       ]}
                       onPress={() => setSelectedDay(day.date)}
                     >
@@ -439,28 +628,30 @@ export default function AttendanceDetailsScreen() {
           </View>
         </View>
 
-        <View style={styles.statsGrid}>
-           <View style={[styles.statItem, { backgroundColor: C.card }]}>
+          <View style={styles.statsGrid}>
+            <View style={[styles.statItem, { backgroundColor: C.card, borderColor: C.gray100, borderWidth: 1 }]}>
               <View style={[styles.statIcon, { backgroundColor: C.success + '15' }]}>
-                 <IconSymbol name="checkmark.circle.fill" size={18} color={C.success} />
+                 <IconSymbol name="checkmark.circle.fill" size={20} color={C.successSoft} />
               </View>
               <Text style={[styles.statNum, { color: C.text }]}>{stats.present}</Text>
               <Text style={[styles.statLab, { color: C.subText }]}>PRESENT</Text>
            </View>
-           <View style={[styles.statItem, { backgroundColor: C.card }]}>
+            <View style={[styles.statItem, { backgroundColor: C.card, borderColor: C.gray100, borderWidth: 1 }]}>
               <View style={[styles.statIcon, { backgroundColor: C.danger + '15' }]}>
-                 <IconSymbol name="xmark.circle.fill" size={18} color={C.danger} />
+                 <IconSymbol name="xmark.circle.fill" size={20} color={C.dangerSoft} />
               </View>
               <Text style={[styles.statNum, { color: C.text }]}>{stats.absent}</Text>
               <Text style={[styles.statLab, { color: C.subText }]}>ABSENT</Text>
            </View>
-           <View style={[styles.statItem, { backgroundColor: C.card }]}>
+            <View style={[styles.statItem, { backgroundColor: C.card, borderColor: C.gray100, borderWidth: 1 }]}>
               <View style={[styles.statIcon, { backgroundColor: C.warning + '15' }]}>
-                 <IconSymbol name="clock.fill" size={18} color={C.warning} />
+                <IconSymbol name="clock.fill" size={20} color={C.warningSoft} />
               </View>
               <Text style={[styles.statNum, { color: C.text }]}>{stats.late}</Text>
               <Text style={[styles.statLab, { color: C.subText }]}>HALF DAY</Text>
-           </View>
+            </View>
+
+           
         </View>
 
         <View style={styles.sectionHeader}>
@@ -470,21 +661,21 @@ export default function AttendanceDetailsScreen() {
         <View style={[styles.detailCard, { backgroundColor: C.card }]}>
            <View style={styles.detailRow}>
               <View style={styles.detailItem}>
-                 <View style={[styles.detailIcon, { backgroundColor: C.primary + '10' }]}>
-                    <IconSymbol name="arrow.down.left.circle.fill" size={18} color={C.primary} />
+                      <View style={[styles.detailIcon, { backgroundColor: C.primary + '10' }]}>
+                        <IconSymbol name="arrow.down.left.circle.fill" size={22} color={C.primarySoft} />
                  </View>
-                 <View style={styles.detailTextContainer}>
-                    <Text style={[styles.detailLabel, { color: C.subText }]}>IN</Text>
-                    <Text style={[styles.detailValue, { color: C.text }]}>{dayDetailsMerged.in_time}</Text>
-                 </View>
+                    <View style={styles.detailTextContainer}>
+                      <Text style={[styles.detailLabel, { color: C.subText }]}>IN</Text>
+                      <Text style={[styles.detailValue, { color: C.text }]}> { (dayDetailsMerged.in_time && dayDetailsMerged.in_time !== '--:--') ? dayDetailsMerged.in_time : (dayDetailsMerged.raw?.in_time || dayDetailsMerged.raw?.in || dayDetailsMerged.raw?.check_in || '--:--') }</Text>
+                    </View>
               </View>
               <View style={styles.detailItem}>
-                 <View style={[styles.detailIcon, { backgroundColor: C.danger + '10' }]}>
-                    <IconSymbol name="arrow.up.right.circle.fill" size={18} color={C.danger} />
-                 </View>
+                  <View style={[styles.detailIcon, { backgroundColor: C.danger + '10' }]}>
+                    <IconSymbol name="arrow.up.right.circle.fill" size={22} color={C.dangerSoft} />
+                  </View>
                  <View style={styles.detailTextContainer}>
                     <Text style={[styles.detailLabel, { color: C.subText }]}>OUT</Text>
-                    <Text style={[styles.detailValue, { color: C.text }]}>{dayDetailsMerged.out_time}</Text>
+                    <Text style={[styles.detailValue, { color: C.text }]}>{ (dayDetailsMerged.out_time && dayDetailsMerged.out_time !== '--:--') ? dayDetailsMerged.out_time : (dayDetailsMerged.raw?.out_time || dayDetailsMerged.raw?.out || dayDetailsMerged.raw?.check_out || '--:--') }</Text>
                  </View>
               </View>
            </View>
@@ -493,18 +684,18 @@ export default function AttendanceDetailsScreen() {
            
            <View style={styles.detailRow}>
               <View style={styles.detailItem}>
-                 <View style={[styles.detailIcon, { backgroundColor: '#4CAF5010' }]}>
-                    <IconSymbol name="timer" size={18} color="#4CAF50" />
-                 </View>
-                 <View style={styles.detailTextContainer}>
-                    <Text style={[styles.detailLabel, { color: C.subText }]}>WORKING</Text>
-                    <Text style={[styles.detailValue, { color: C.text }]}>{dayDetailsMerged.working_hours}</Text>
-                 </View>
+                  <View style={[styles.detailIcon, { backgroundColor: '#4CAF5010' }]}>
+                    <IconSymbol name="timer" size={22} color={C.successSoft} />
+                  </View>
+                      <View style={styles.detailTextContainer}>
+                        <Text style={[styles.detailLabel, { color: C.subText }]}>WORKING</Text>
+                        <Text style={[styles.detailValue, { color: C.text }]}>{dynamicWork ?? ((dayDetailsMerged.working_hours && dayDetailsMerged.working_hours !== '--:--') ? dayDetailsMerged.working_hours : (dayDetailsMerged.raw?.total_working_hours || dayDetailsMerged.raw?.total_hours || '--:--'))}</Text>
+                      </View>
               </View>
               <View style={styles.detailItem}>
-                 <View style={[styles.detailIcon, { backgroundColor: '#FF980010' }]}>
-                    <IconSymbol name="bell.fill" size={18} color="#FF9800" />
-                 </View>
+                  <View style={[styles.detailIcon, { backgroundColor: '#FF980010' }]}>
+                    <IconSymbol name="bell.fill" size={22} color={C.warningSoft} />
+                  </View>
                  <View style={styles.detailTextContainer}>
                     <Text style={[styles.detailLabel, { color: C.subText }]}>SHIFT</Text>
                     <Text style={[styles.detailValue, { color: C.text }]}>{dayDetailsMerged.shift}</Text>
@@ -600,37 +791,37 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 18, fontWeight: '800', color: '#FFFFFF' },
   content: { flex: 1 },
   monthHeader: { paddingHorizontal: 20, marginBottom: 15 },
-  monthSelector: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', paddingHorizontal: 15, paddingVertical: 10, borderRadius: 16, gap: 10, elevation: 2, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 10 },
+  monthSelector: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 14, gap: 10, elevation: 0 },
   monthText: { fontSize: 14, fontWeight: '800' },
-  calendarCard: { marginHorizontal: 20, borderRadius: 28, padding: 10, elevation: 4, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 15 },
+  calendarCard: { marginHorizontal: 20, borderRadius: 20, padding: 10, elevation: 0 },
   weekContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   navBtn: { width: 30, height: 60, alignItems: 'center', justifyContent: 'center' },
   weekDaysRow: { flex: 1, flexDirection: 'row', justifyContent: 'space-around' },
   dayColumn: { alignItems: 'center' },
-  weekDayName: { fontSize: 10, fontWeight: '700', marginBottom: 8, textTransform: 'uppercase' },
-  dateCircle: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
+  weekDayName: { fontSize: 10, fontWeight: '700', marginBottom: 6, textTransform: 'uppercase' },
+  dateCircle: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', marginBottom: 2, backgroundColor: 'transparent' },
   dateText: { fontSize: 13, fontWeight: '800' },
   dotRow: { height: 4, justifyContent: 'center' },
   presentDot: { width: 4, height: 4, borderRadius: 2 },
-  statsGrid: { flexDirection: 'row', gap: 10, paddingHorizontal: 20, marginTop: 20 },
-  statItem: { flex: 1, paddingVertical: 12, paddingHorizontal: 5, borderRadius: 20, alignItems: 'center', gap: 2, elevation: 2, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 10 },
-  statIcon: { width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
-  statNum: { fontSize: 16, fontWeight: '900', textAlign: 'center' },
-  statLab: { fontSize: 8, fontWeight: '800', letterSpacing: 0.5, textAlign: 'center' },
+  statsGrid: { flexDirection: 'row', gap: 10, paddingHorizontal: 20, marginTop: 18 },
+  statItem: { flex: 1, paddingVertical: 14, paddingHorizontal: 8, borderRadius: 16, alignItems: 'center', gap: 6, elevation: 3, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 6 }, borderWidth: 1, borderColor: 'transparent' },
+  statIcon: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
+  statNum: { fontSize: 18, fontWeight: '900', textAlign: 'center' },
+  statLab: { fontSize: 10, fontWeight: '800', letterSpacing: 0.6, textAlign: 'center' },
   sectionHeader: { paddingHorizontal: 20, marginTop: 30, marginBottom: 15 },
   sectionTitle: { fontSize: 15, fontWeight: '800' },
-  detailCard: { marginHorizontal: 20, borderRadius: 24, paddingVertical: 15, paddingHorizontal: 12, elevation: 2, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 10 },
-  detailRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  detailItem: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  detailIcon: { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  detailCard: { marginHorizontal: 20, borderRadius: 18, paddingVertical: 18, paddingHorizontal: 16, elevation: 6, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 18, shadowOffset: { width: 0, height: 10 }, borderWidth: 1, borderColor: 'transparent' },
+  detailRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
+  detailItem: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 6 },
+  detailIcon: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   detailTextContainer: { flex: 1 },
-  detailLabel: { fontSize: 8, fontWeight: '800', letterSpacing: 0.3, marginBottom: 1 },
-  detailValue: { fontSize: 12, fontWeight: '800' },
+  detailLabel: { fontSize: 10, fontWeight: '800', letterSpacing: 0.4, marginBottom: 4, textTransform: 'uppercase' },
+  detailValue: { fontSize: 16, fontWeight: '900' },
   divider: { height: 1, marginVertical: 12 },
   teamList: { paddingHorizontal: 20, gap: 12 },
-  memberCard: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 15, borderRadius: 24, elevation: 1, shadowColor: '#000', shadowOpacity: 0.02, shadowRadius: 10 },
+  memberCard: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, borderRadius: 18, elevation: 0, borderWidth: 1, borderColor: 'transparent', shadowColor: '#000', shadowOpacity: 0.03, shadowRadius: 10, shadowOffset: { width: 0, height: 6 } },
   memberLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  memberAvatar: { width: 44, height: 44, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  memberAvatar: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
   memberInitial: { fontSize: 16, fontWeight: '800' },
   memberName: { fontSize: 14, fontWeight: '700', marginBottom: 2 },
   memberTime: { fontSize: 11, fontWeight: '600' },

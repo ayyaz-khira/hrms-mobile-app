@@ -144,17 +144,17 @@ export default function ProfileScreen() {
 
   return (
     <View style={[styles.mainContainer, { backgroundColor: C.bg }]}>
-      <StatusBar barStyle="light-content" backgroundColor={C.dark} />
+      <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
 
       {/* Fixed Header */}
       <View style={styles.headerContainer}>
-        <View style={[styles.headerBg, { backgroundColor: C.dark }]}>
+        <View style={[styles.headerBg, { backgroundColor: C.card }]}>
           <SafeAreaView edges={['top']}>
             <View style={styles.headerRow}>
               <View style={{ width: 40 }} />
-              <Text style={styles.headerTitle}>My Profile</Text>
-              <TouchableOpacity style={styles.logoutIconBtn} onPress={handleLogout}>
-                <IconSymbol name="arrow.right.to.line" size={20} color="#FF5A5F" />
+              <Text style={[styles.headerTitle, { color: C.text }]}>My Profile</Text>
+              <TouchableOpacity style={[styles.logoutIconBtn, { backgroundColor: 'transparent' }]} onPress={handleLogout}>
+                <IconSymbol name="arrow.right.to.line" size={20} color={C.subText} />
               </TouchableOpacity>
             </View>
           </SafeAreaView>
@@ -168,38 +168,38 @@ export default function ProfileScreen() {
       >
         <View style={styles.profileSection}>
           <View style={styles.avatarWrapper}>
-            <View style={[styles.avatarContainer, { borderColor: C.primary }]}>
+            <View style={[styles.avatarContainer, { borderColor: C.primary, backgroundColor: C.gray50 }]}>
               {profileImage ? (
                 <Image source={{ uri: profileImage }} style={styles.avatarImage} />
               ) : (
-                <Text style={[styles.avatarText, { color: C.primary }]}>{userName.charAt(0).toUpperCase()}</Text>
+                <Text style={[styles.avatarText, { color: C.primary }]}>{userName ? userName.charAt(0).toUpperCase() : 'U'}</Text>
               )}
             </View>
-            <TouchableOpacity style={styles.editAvatarBtn} onPress={() => setImagePickerVisible(true)}>
+            <TouchableOpacity style={[styles.editAvatarBtn, { borderColor: C.card, backgroundColor: C.primary }]} onPress={() => setImagePickerVisible(true)}>
               <IconSymbol name="camera.fill" size={12} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
-          <Text style={[styles.userName, { color: C.text }]}>{userName}</Text>
-          <Text style={[styles.userRole, { color: C.subText }]}>Software Engineer • MINIX</Text>
+          <Text style={[styles.userName, { color: C.text }]}>{userName || 'User'}</Text>
+          <Text style={[styles.userRole, { color: C.subText }]}>{employeeDetails?.designation || 'Software Engineer'} • {employeeDetails?.company || 'MINIX'}</Text>
         </View>
 
         <View style={styles.statsGrid}>
-          <View style={[styles.statItem, { backgroundColor: C.card }]}>
-            <Text style={[styles.statValue, { color: C.text }]}>
+          <View style={[styles.statItem, { backgroundColor: C.card, borderWidth: 1, borderColor: C.gray100 }]}>
+            <Text style={[styles.statValue, { color: C.text }]}> 
               {employeeDetails?.date_of_joining
                 ? new Date(employeeDetails.date_of_joining).toLocaleDateString([], { day: '2-digit', month: 'short' })
                 : '-- --'}
             </Text>
             <Text style={[styles.statLabel, { color: C.subText }]}>Joined</Text>
           </View>
-          <View style={[styles.statItem, { backgroundColor: C.card }]}>
+          <View style={[styles.statItem, { backgroundColor: C.card, borderWidth: 1, borderColor: C.gray100 }]}>
             <Text style={[styles.statValue, { color: C.text }]} numberOfLines={2} adjustsFontSizeToFit={true} minimumFontScale={0.7}>
               {employeeDetails?.department || 'IT Dept'}
             </Text>
             <Text style={[styles.statLabel, { color: C.subText }]}>Dept</Text>
           </View>
-          <View style={[styles.statItem, { backgroundColor: C.card }]}>
-            <Text style={[styles.statValue, { color: C.text }]}>
+          <View style={[styles.statItem, { backgroundColor: C.card, borderWidth: 1, borderColor: C.gray100 }]}>
+            <Text style={[styles.statValue, { color: C.text }]}> 
               {employeeDetails?.employment_type || 'Full Time'}
             </Text>
             <Text style={[styles.statLabel, { color: C.subText }]}>Type</Text>
@@ -210,12 +210,12 @@ export default function ProfileScreen() {
           {menuItems.map((item, i) => (
             <TouchableOpacity
               key={i}
-              style={[styles.menuItem, { backgroundColor: C.card }]}
+              style={[styles.menuItem, { backgroundColor: C.card, borderWidth: 1, borderColor: C.gray100, borderRadius: 16, padding: 14 }]}
               onPress={() => router.push(item.route as any)}
             >
               <View style={styles.menuItemLeft}>
-                <View style={[styles.menuIconContainer, { backgroundColor: item.color + '15' }]}>
-                  <IconSymbol name={item.icon as any} size={20} color={item.color} />
+                <View style={[styles.menuIconContainer, { backgroundColor: item.color + '12' }]}>
+                  <IconSymbol name={item.icon as any} size={18} color={C.subText} />
                 </View>
                 <Text style={[styles.menuItemText, { color: C.text }]}>{item.title}</Text>
               </View>
@@ -224,10 +224,10 @@ export default function ProfileScreen() {
           ))}
         </View>
 
-        <View style={[styles.themeToggleCard, { backgroundColor: C.card }]}>
+        <View style={[styles.themeToggleCard, { backgroundColor: C.card, borderWidth: 1, borderColor: C.gray100, borderRadius: 16, padding: 14 }]}>
           <View style={styles.menuItemLeft}>
             <View style={[styles.menuIconContainer, { backgroundColor: '#FFD70015' }]}>
-              <IconSymbol name={isDarkMode ? "sun.max.fill" : "zzz"} size={20} color="#FFD700" />
+              <IconSymbol name={isDarkMode ? "sun.max.fill" : "zzz"} size={20} color={C.subText} />
             </View>
             <View>
               <Text style={[styles.menuItemText, { color: C.text }]}>Dark Mode</Text>
@@ -246,19 +246,19 @@ export default function ProfileScreen() {
       {/* Image Picker Modal */}
       <Modal visible={imagePickerVisible} transparent animationType="slide">
         <Pressable style={styles.modalOverlay} onPress={() => setImagePickerVisible(false)}>
-          <View style={[styles.pickerCard, { backgroundColor: C.card }]}>
+          <View style={[styles.pickerCard, { backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20 }]}>
             <View style={styles.pickerIndicator} />
             <Text style={[styles.pickerTitle, { color: C.text }]}>Update Profile Photo</Text>
             <View style={styles.pickerOptions}>
               <TouchableOpacity style={styles.pickerOption} onPress={takePhoto}>
-                <View style={[styles.optionIcon, { backgroundColor: isDarkMode ? '#334155' : '#EEF2FF' }]}>
-                  <IconSymbol name="camera.fill" size={24} color={C.primary} />
-                </View>
+                    <View style={[styles.optionIcon, { backgroundColor: isDarkMode ? '#334155' : '#EEF2FF' }]}>
+                      <IconSymbol name="camera.fill" size={24} color={C.subText} />
+                    </View>
                 <Text style={[styles.optionText, { color: C.subText }]}>Take Photo</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.pickerOption} onPress={pickImage}>
                 <View style={[styles.optionIcon, { backgroundColor: isDarkMode ? '#334155' : '#E8F5E9' }]}>
-                  <IconSymbol name="photo.fill" size={24} color="#4CAF50" />
+                  <IconSymbol name="photo.fill" size={24} color={C.subText} />
                 </View>
                 <Text style={[styles.optionText, { color: C.subText }]}>From Gallery</Text>
               </TouchableOpacity>

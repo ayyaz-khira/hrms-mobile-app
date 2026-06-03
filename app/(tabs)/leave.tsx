@@ -1,11 +1,11 @@
-import React, { useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Dimensions, StatusBar, useWindowDimensions } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { router, useFocusEffect } from 'expo-router';
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { router, useFocusEffect } from 'expo-router';
+import React, { useCallback } from 'react';
+import { Dimensions, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../context/ThemeContext';
 import { useLeaveStore } from '../../store/leaveStore';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width } = Dimensions.get('window');
 
@@ -68,17 +68,17 @@ export default function LeaveTrackerScreen() {
 
   return (
     <View style={[styles.mainContainer, { backgroundColor: C.bg }]}>
-      <StatusBar barStyle="light-content" backgroundColor={C.dark} />
+      <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
 
       {/* Fixed Header */}
       <View style={styles.headerContainer}>
-        <View style={[styles.headerBg, { backgroundColor: C.dark }]}>
+        <View style={[styles.headerBg, { backgroundColor: C.card }]}>
           <SafeAreaView edges={['top']}>
             <View style={styles.headerRow}>
-              <TouchableOpacity onPress={() => router.replace('/home')} style={styles.backBtn}>
-                <IconSymbol name="arrow.left" size={24} color="#FFFFFF" />
+              <TouchableOpacity onPress={() => router.replace('/home')} style={[styles.backBtn, { backgroundColor: C.gray50 }]}>
+                <IconSymbol name="arrow.left" size={20} color={C.primary} />
               </TouchableOpacity>
-              <Text style={styles.headerTitle}>Leave Tracker</Text>
+              <Text style={[styles.headerTitle, { color: C.text }]}>Leave Tracker</Text>
               <View style={{ width: 40 }} />
             </View>
           </SafeAreaView>
@@ -91,13 +91,18 @@ export default function LeaveTrackerScreen() {
         contentContainerStyle={{ paddingTop: 20, paddingBottom: 120 }}
       >
         <View style={styles.summaryGrid}>
-          {balances.map((bal, idx) => (
-            <View key={idx} style={[styles.summaryCard, { backgroundColor: getLeaveColor(bal.leave_type, idx) }]}>
-              <Text style={styles.summaryLabel}>{bal.leave_type}</Text>
-              <Text style={styles.summaryValue}>{bal.leaves_taken}/{bal.max_leaves}</Text>
-              <Text style={styles.summarySub}>Remaining: {bal.balance || (bal.max_leaves - bal.leaves_taken)}</Text>
-            </View>
-          ))}
+          {balances.map((bal, idx) => {
+            const color = getLeaveColor(bal.leave_type, idx);
+            const bg = `${color}12`;
+            const border = `${color}22`;
+            return (
+              <View key={idx} style={[styles.summaryCard, { backgroundColor: bg, borderColor: border, borderWidth: 1, paddingLeft: 14 }]}> 
+                <Text style={[styles.summaryLabel, { color: C.subText }]}>{bal.leave_type}</Text>
+                <Text style={[styles.summaryValue, { color: C.text }]}>{bal.leaves_taken}/{bal.max_leaves}</Text>
+                <Text style={[styles.summarySub, { color: C.subText }]}>Remaining: {bal.balance || (bal.max_leaves - bal.leaves_taken)}</Text>
+              </View>
+            );
+          })}
         </View>
 
         <View style={[styles.actionRow, useCompactActions && styles.compactActionRow]}>
@@ -114,7 +119,7 @@ export default function LeaveTrackerScreen() {
               <Text style={styles.mainActionText}>Approve Leaves</Text>
             </TouchableOpacity>
           )}
-          <TouchableOpacity style={[styles.sideAction, useCompactActions && styles.compactSideAction, { backgroundColor: C.card }]} onPress={() => router.push('/leave-history')}>
+          <TouchableOpacity style={[styles.sideAction, useCompactActions && styles.compactSideAction, { backgroundColor: C.card, borderWidth: 1, borderColor: C.gray100 }]} onPress={() => router.push('/leave-history')}>
             <IconSymbol name="list.bullet.indent" size={20} color={C.primary} />
           </TouchableOpacity>
         </View>
@@ -133,13 +138,13 @@ export default function LeaveTrackerScreen() {
             myRequests.slice(0, 3).map((item, i) => {
               const statusColor = getStatusColor(item.status);
               return (
-                <View key={i} style={[styles.requestCard, { backgroundColor: C.card }]}>
+                <View key={i} style={[styles.requestCard, { backgroundColor: C.gray50, borderColor: C.gray100, borderWidth: 1 }]}>
                   <View style={styles.requestTop}>
                     <View>
                       <Text style={[styles.requestType, { color: C.text }]}>{item.leave_type}</Text>
                       <Text style={[styles.requestRange, { color: C.subText }]}>{item.from_date} - {item.to_date}</Text>
                     </View>
-                    <View style={[styles.statusBadge, { backgroundColor: statusColor + '15' }]}>
+                    <View style={[styles.statusBadge, { backgroundColor: statusColor + '12', borderColor: statusColor + '22', borderWidth: 1 }]}>
                       <Text style={[styles.statusText, { color: statusColor }]}>{item.status}</Text>
                     </View>
                   </View>
@@ -163,7 +168,7 @@ export default function LeaveTrackerScreen() {
                <Text style={[styles.sectionTitle, { color: C.text }]}>Leave Calendar</Text>
             </View>
 
-            <View style={[styles.calendarPreview, { backgroundColor: C.card }]}>
+            <View style={[styles.calendarPreview, { backgroundColor: C.gray50, borderColor: C.gray100, borderWidth: 1 }]}>
                <View style={styles.calHeader}>
                   <Text style={[styles.calMonth, { color: C.text }]}>May 2026</Text>
                </View>
@@ -192,16 +197,16 @@ const styles = StyleSheet.create({
    headerTitle: { fontSize: 18, fontWeight: '800', color: '#FFFFFF' },
    content: { flex: 1 },
    summaryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, paddingHorizontal: 20 },
-   summaryCard: { width: (width - 52) / 2, borderRadius: 20, padding: 15, elevation: 4 },
-   summaryLabel: { color: 'rgba(255,255,255,0.8)', fontSize: 11, fontWeight: '700', textTransform: 'uppercase', marginBottom: 8 },
-   summaryValue: { color: '#FFFFFF', fontSize: 22, fontWeight: '900', marginBottom: 4 },
-   summarySub: { color: 'rgba(255,255,255,0.6)', fontSize: 10, fontWeight: '600' },
+  summaryCard: { width: (width - 52) / 2, borderRadius: 16, padding: 14, elevation: 0, position: 'relative' },
+  summaryLabel: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', marginBottom: 6, letterSpacing: 0.6 },
+  summaryValue: { fontSize: 20, fontWeight: '900', marginBottom: 6, letterSpacing: -0.6, lineHeight: 26 },
+  summarySub: { fontSize: 11, fontWeight: '600', color: 'rgba(0,0,0,0.6)' },
    actionRow: { flexDirection: 'row', gap: 12, paddingHorizontal: 20, marginTop: 25 },
    compactActionRow: { flexWrap: 'wrap' },
-   mainAction: { flex: 1, minWidth: 0, minHeight: 60, borderRadius: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 8, elevation: 4 },
+  mainAction: { flex: 1, minWidth: 0, minHeight: 60, borderRadius: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 8, elevation: 0 },
    compactMainAction: { flexBasis: (width - 52) / 2, height: 64 },
    mainActionText: { flexShrink: 1, color: '#FFFFFF', fontSize: 14, lineHeight: 17, fontWeight: '800', textAlign: 'center' },
-   sideAction: { width: 60, height: 60, borderRadius: 20, alignItems: 'center', justifyContent: 'center', elevation: 2 },
+  sideAction: { width: 60, height: 60, borderRadius: 20, alignItems: 'center', justifyContent: 'center', elevation: 0 },
    compactSideAction: { flex: 1, height: 48 },
    sectionHeader: { paddingHorizontal: 20, marginTop: 30, marginBottom: 15 },
    sectionTitle: { fontSize: 16, fontWeight: '800' },

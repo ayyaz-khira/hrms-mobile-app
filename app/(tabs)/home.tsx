@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router, useFocusEffect } from 'expo-router';
 import React, { useCallback, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Dimensions,
   Modal,
@@ -13,7 +14,7 @@ import {
   StyleSheet,
   Text,
   TouchableOpacity,
-  View
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../context/ThemeContext';
@@ -23,20 +24,23 @@ const { width } = Dimensions.get('window');
 export default function HomeScreen() {
   const { isDarkMode } = useTheme();
 
+  // modern neutral palette tuned for enterprise look
   const C = {
-    primary: '#4361EE',
-    dark: isDarkMode ? '#050505' : '#1B1B2F',
-    white: isDarkMode ? '#161B22' : '#FFFFFF',
-    gray50: isDarkMode ? '#1F2937' : '#F8F9FA',
-    gray100: isDarkMode ? '#161B22' : '#F1F3F5',
-    gray200: isDarkMode ? '#1F2937' : '#E9ECEF',
-    gray400: isDarkMode ? '#4B5563' : '#CED4DA',
-    gray600: isDarkMode ? '#94A3B8' : '#868E96',
-    gray900: isDarkMode ? '#F8F9FB' : '#212529',
+    primary: '#2563EB',
+    accent: '#7C3AED',
+    dark: isDarkMode ? '#060611' : '#0F1724',
+    white: isDarkMode ? '#0B1220' : '#FFFFFF',
+    gray50: isDarkMode ? '#0F1724' : '#FAFBFD',
+    gray100: isDarkMode ? '#0B1220' : '#F3F4F6',
+    gray200: isDarkMode ? '#111827' : '#E6EEF8',
+    gray400: isDarkMode ? '#4B5563' : '#9CA3AF',
+    gray600: isDarkMode ? '#9AA4B2' : '#6B7280',
+    gray900: isDarkMode ? '#E6EEF8' : '#111827',
     success: '#10B981',
     danger: '#EF4444',
     warning: '#F59E0B',
-    bg: isDarkMode ? '#0B0E14' : '#F8F9FB',
+    bg: isDarkMode ? '#05060A' : '#F6F9FC',
+    card: isDarkMode ? '#071023' : '#FFFFFF'
   };
 
   const [userName, setUserName] = useState('');
@@ -300,15 +304,25 @@ export default function HomeScreen() {
       });
 
       if (response.ok) {
-        setIsCheckedIn(!isCheckedIn);
+        setIsCheckedIn(prev => !prev);
         const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        setDashboardData(prev => ({
-          ...prev,
-          presentDays: presentCount,
-          checkIn: earliest ? earliest.time : '--:--',
-          checkOut: latest ? latest.time : '--:--',
-          workedHours: workedStr
-        }));
+        // Optimistically update dashboard without relying on variables from loadDashboardData
+        setDashboardData(prev => {
+          if (punchType === 'IN') {
+            return {
+              ...prev,
+              presentDays: (prev.presentDays || 0) + 1,
+              checkIn: now,
+              // Reset worked hours timer on check-in
+              workedHours: '00:00:00'
+            };
+          }
+          // OUT
+          return {
+            ...prev,
+            checkOut: now
+          };
+        });
         Alert.alert('Success', `Successfully punched ${punchType.toLowerCase()} at ${now}`);
         setTimeout(loadDashboardData, 1000);
       } else {
@@ -392,17 +406,19 @@ export default function HomeScreen() {
       paddingVertical: 15,
       marginTop: Platform.OS === 'android' ? 10 : 0,
     },
-    greetingText: { fontSize: 14, color: C.gray600, fontWeight: '500' },
-    userName: { fontSize: 20, fontWeight: '800', color: C.gray900 },
+    greetingText: { fontSize: 15, color: C.gray600, fontWeight: '600' },
+    userName: { fontSize: 22, fontWeight: '700', color: C.gray900, letterSpacing: -0.4 },
     profileBadge: {
-      width: 40,
-      height: 40,
-      borderRadius: 20,
+      width: 44,
+      height: 44,
+      borderRadius: 22,
       backgroundColor: '#3F51B5',
       alignItems: 'center',
       justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: C.gray100,
     },
-    profileBadgeText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
+    profileBadgeText: { color: '#FFFFFF', fontWeight: '800', fontSize: 16 },
     container: { flex: 1, paddingHorizontal: 20 },
     dashboardHeader: { marginBottom: 10 },
     dashboardTitle: { fontSize: 15, fontWeight: '800', color: C.gray900 },
@@ -444,26 +460,29 @@ export default function HomeScreen() {
     statsRow: { flexDirection: 'row', gap: 15, marginBottom: 25 },
     statCard: {
       flex: 1,
-      backgroundColor: C.white,
-      borderRadius: 20,
-      padding: 15,
+      backgroundColor: C.card,
+      borderRadius: 16,
+      padding: 14,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 12,
       elevation: 2,
       shadowColor: '#000',
       shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.05,
+      shadowOpacity: 0.04,
       shadowRadius: 8,
+      borderWidth: 1,
+      borderColor: C.gray100,
     },
     statIconContainer: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
     statValue: { fontSize: 18, fontWeight: '800', color: C.gray900 },
     statLabel: { fontSize: 11, color: C.gray600, fontWeight: '500' },
     sectionTitle: { fontSize: 16, fontWeight: '800', color: C.gray900, marginBottom: 15 },
-    quickActionsGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-start', gap: 8, marginBottom: 25 },
-    actionItem: { alignItems: 'center', width: '23%', marginBottom: 15 },
-    actionIconBg: { width: 48, height: 48, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
-    actionLabel: { fontSize: 9, fontWeight: '700', color: C.gray900, textAlign: 'center' },
+    quickActionsGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-start', gap: 10, marginBottom: 22 },
+    actionItem: { alignItems: 'center', minWidth: 72, paddingVertical: 8, paddingHorizontal: 6, marginBottom: 12, borderRadius: 12, backgroundColor: 'transparent', borderWidth: 0, borderColor: 'transparent', overflow: 'hidden' },
+    actionInner: { alignItems: 'center' },
+    actionIconBg: { width: 56, height: 56, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginBottom: 8, overflow: 'hidden', elevation: 0, shadowOpacity: 0, backgroundColor: 'transparent' },
+    actionLabel: { fontSize: 12, fontWeight: '700', color: C.gray900, textAlign: 'center' },
     announcementList: {
       backgroundColor: C.white,
       borderRadius: 20,
@@ -505,47 +524,97 @@ export default function HomeScreen() {
     detailValue: { fontSize: 13, fontWeight: '800', color: C.gray900 },
     sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 25, marginBottom: 15 },
     viewAllText: { fontSize: 12, color: C.primary, fontWeight: '600' },
-    attendanceCard: { backgroundColor: C.white, borderRadius: 20, padding: 15, elevation: 3 },
-    attendanceRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12 },
-    attendanceDateContainer: { width: 60 },
+    attendanceCard: { backgroundColor: C.card, borderRadius: 16, padding: 6, elevation: 2, borderWidth: 1, borderColor: C.gray100 },
+    attendanceRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 12, borderRadius: 12, backgroundColor: isDarkMode ? 'transparent' : 'transparent' },
+    attendanceDateContainer: { width: 72 },
     attendanceDate: { fontSize: 14, fontWeight: '800', color: C.gray900 },
     attendanceTimeContainer: { flex: 1, flexDirection: 'row', gap: 20 },
     timeItem: { gap: 2 },
-    timeLabel: { fontSize: 10, color: C.gray600, fontWeight: '600', textTransform: 'uppercase' },
-    timeValue: { fontSize: 13, fontWeight: '700', color: C.gray900 },
-    statusBadgeSmall: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, minWidth: 70, alignItems: 'center' },
-    statusTextSmall: { fontSize: 10, fontWeight: '800' },
+    timeLabel: { fontSize: 11, color: C.gray600, fontWeight: '700', textTransform: 'uppercase' },
+    timeValue: { fontSize: 14, fontWeight: '800', color: C.gray900 },
+    // new attendance visuals
+    dateBubble: { width: 56, height: 56, borderRadius: 12, backgroundColor: isDarkMode ? '#0B1220' : '#FFFFFF', alignItems: 'center', justifyContent: 'center', marginRight: 12, borderWidth: 1, borderColor: C.gray100 },
+    dateDay: { fontSize: 16, fontWeight: '900', color: C.primary },
+    dateMonth: { fontSize: 11, fontWeight: '800', color: C.gray600 },
+    timeColumn: { flex: 1 },
+    timeRow: { flexDirection: 'row', alignItems: 'center' },
+    timeBig: { fontSize: 15, fontWeight: '900', color: C.gray900, marginTop: 4 },
+    workingHours: { fontSize: 12, color: C.gray600, marginTop: 6, fontWeight: '700' },
+    rowRight: { alignItems: 'center', justifyContent: 'center', width: 64 },
+    statusBadgeSmall: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, minWidth: 70, alignItems: 'center' },
+    statusTextSmall: { fontSize: 12, fontWeight: '800' },
     divider: { height: 1, backgroundColor: C.gray100, marginHorizontal: 0 },
+    // New dashboard styles
+    timerContainerLarge: { width: '100%', paddingVertical: 6 },
+    timerHeaderLarge: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    timerBig: { fontSize: 28, fontWeight: '900', color: C.primary, marginTop: 6 },
+    historyBtn: { paddingHorizontal: 12, paddingVertical: 6, backgroundColor: C.primary + '12', borderRadius: 10 },
+    smallMuted: { fontSize: 11, color: C.gray600, fontWeight: '600' },
+    checkInOutRowCompact: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8 },
+    checkBlock: { alignItems: 'center', width: '40%' },
+    iconCenter: { width: 40, alignItems: 'center', justifyContent: 'center' },
+    checkLabel: { fontSize: 11, color: C.gray600, fontWeight: '700' },
+    checkValue: { fontSize: 16, fontWeight: '800', color: C.gray900, marginTop: 4 },
+    punchBtn: { backgroundColor: C.primary, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 12, elevation: 4 },
+    punchTxt: { color: '#fff', fontWeight: '800' },
+    checkedPill: { backgroundColor: C.primary + '15', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 12 },
+    checkedTxt: { color: C.primary, fontWeight: '800' },
+    // loading overlay
+    loadingOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 16, backgroundColor: isDarkMode ? 'rgba(2,6,23,0.6)' : 'rgba(255,255,255,0.6)', alignItems: 'center', justifyContent: 'center' },
   });
 
-  const AttendanceRow = ({ date, checkIn, checkOut, status, color }: any) => (
-    <View style={styles.attendanceRow}>
-      <View style={styles.attendanceDateContainer}>
-        <Text style={styles.attendanceDate}>{date}</Text>
+  const AttendanceRow = ({ date, checkIn, checkOut, status, color, workingHours }: any) => (
+    <Pressable
+      style={styles.attendanceRow}
+      onPress={() => router.push('/attend')}
+      accessibilityRole="button"
+      accessibilityLabel={`${date}. ${status}. Check in ${checkIn}. Check out ${checkOut}.`}
+      android_ripple={{ color: '#00000004' }}
+    >
+      <View style={styles.dateBubble}>
+        <Text style={styles.dateDay}>{date.split(' ')[0]}</Text>
+        <Text style={styles.dateMonth}>{date.split(' ')[1]}</Text>
       </View>
-      <View style={styles.attendanceTimeContainer}>
-        <View style={styles.timeItem}>
-          <Text style={styles.timeLabel}>Check-in</Text>
-          <Text style={styles.timeValue}>{checkIn}</Text>
+
+      <View style={styles.timeColumn}>
+        <View style={styles.timeRow}>
+          <View>
+            <Text style={styles.timeLabel}>Check in</Text>
+            <Text style={styles.timeBig}>{checkIn}</Text>
+          </View>
+          <View style={{ marginLeft: 18 }}>
+            <Text style={styles.timeLabel}>Check out</Text>
+            <Text style={styles.timeBig}>{checkOut}</Text>
+          </View>
         </View>
-        <View style={styles.timeItem}>
-          <Text style={styles.timeLabel}>Check-out</Text>
-          <Text style={styles.timeValue}>{checkOut}</Text>
+        <Text style={styles.workingHours}>{workingHours ? workingHours : '-'}</Text>
+      </View>
+
+      <View style={styles.rowRight}> 
+        <View style={[styles.statusBadgeSmall, { backgroundColor: color + '12' }]}> 
+          <Text style={[styles.statusTextSmall, { color: color }]}>{status}</Text>
         </View>
+        <IconSymbol name="chevron.right" size={18} color={C.gray400} />
       </View>
-      <View style={[styles.statusBadgeSmall, { backgroundColor: color + '15' }]}>
-        <Text style={[styles.statusTextSmall, { color: color }]}>{status}</Text>
-      </View>
-    </View>
+    </Pressable>
   );
 
   const ActionItem = ({ icon, label, color, onPress }: any) => (
-    <TouchableOpacity style={styles.actionItem} onPress={onPress}>
-      <View style={[styles.actionIconBg, { backgroundColor: C.white, borderColor: C.gray100, borderWidth: 1 }]}>
-        <IconSymbol name={icon} size={22} color={color} />
+    <Pressable
+      style={styles.actionItem}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      android_ripple={{ color: '#00000006' }}
+      hitSlop={8}
+    >
+      <View style={styles.actionInner}>
+        <View style={[styles.actionIconBg, { backgroundColor: (color || C.primary) + '15' }]}>
+          <IconSymbol name={icon} size={20} color={color || C.primary} />
+        </View>
+        <Text style={[styles.actionLabel, { color: C.gray900 }]}>{label}</Text>
       </View>
-      <Text style={[styles.actionLabel, { color: C.gray900 }]}>{label}</Text>
-    </TouchableOpacity>
+    </Pressable>
   );
 
   const AnnouncementItem = ({ title, time, dotColor }: any) => (
@@ -565,12 +634,18 @@ export default function HomeScreen() {
         {/* Top Header */}
         <View style={styles.topHeader}>
           <View>
-            <Text style={styles.greetingText}>Good morning</Text>
             <Text style={styles.userName}>{userName}</Text>
           </View>
-          <TouchableOpacity style={styles.profileBadge} onPress={() => router.push("/profile")}>
+          <Pressable
+            style={styles.profileBadge}
+            onPress={() => router.push("/profile")}
+            accessibilityRole="button"
+            accessibilityLabel={`Open profile for ${userName}`}
+            android_ripple={{ color: '#ffffff10' }}
+            hitSlop={8}
+          >
             <Text style={styles.profileBadgeText}>{userName.charAt(0).toUpperCase()}</Text>
-          </TouchableOpacity>
+          </Pressable>
         </View>
 
         <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
@@ -579,63 +654,63 @@ export default function HomeScreen() {
           </View>
 
           {/* Main Dashboard Card */}
-          <View style={styles.dashboardCard}>
-            <View style={styles.timerContainer}>
-              <View style={styles.timerHeader}>
-                <Text style={styles.timerLabel}>Total Worked Hours</Text>
-                <TouchableOpacity onPress={() => router.push('/check-in')}>
-                  <Text style={styles.historyBtnText}>History</Text>
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.clockRow}>
-                <View style={styles.digitGroup}>
-                  <View style={styles.digitPair}>
-                    <View style={styles.digitBox}><Text style={styles.digitText}>{(dashboardData.workedHours.split(':')[0] || '00')[0] || '0'}</Text></View>
-                    <View style={styles.digitBox}><Text style={styles.digitText}>{(dashboardData.workedHours.split(':')[0] || '00')[1] || '0'}</Text></View>
-                  </View>
-                  <Text style={styles.digitSub}>HOURS</Text>
+          <View style={[styles.dashboardCard, { backgroundColor: C.card }]}>
+            <View style={{ position: 'relative' }}>
+            <View style={styles.timerContainerLarge}>
+              <View style={styles.timerHeaderLarge}>
+                <View>
+                  <Text style={styles.timerLabel}>Total Worked</Text>
+                  <Text style={styles.timerBig}>{dashboardData.workedHours}</Text>
                 </View>
-
-                <Text style={styles.colon}>:</Text>
-
-                <View style={styles.digitGroup}>
-                  <View style={styles.digitPair}>
-                    <View style={styles.digitBox}><Text style={styles.digitText}>{(dashboardData.workedHours.split(':')[1] || '00')[0] || '0'}</Text></View>
-                    <View style={styles.digitBox}><Text style={styles.digitText}>{(dashboardData.workedHours.split(':')[1] || '00')[1] || '0'}</Text></View>
-                  </View>
-                  <Text style={styles.digitSub}>MINUTES</Text>
-                </View>
-
-                <Text style={styles.colon}>:</Text>
-
-                <View style={styles.digitGroup}>
-                  <View style={styles.digitPair}>
-                    <View style={styles.digitBox}><Text style={styles.digitText}>{(dashboardData.workedHours.split(':')[2] || '00')[0] || '0'}</Text></View>
-                    <View style={styles.digitBox}><Text style={styles.digitText}>{(dashboardData.workedHours.split(':')[2] || '00')[1] || '0'}</Text></View>
-                  </View>
-                  <Text style={styles.digitSub}>SECONDS</Text>
+                <View style={{ alignItems: 'flex-end' }}>
+                  <TouchableOpacity onPress={() => router.push('/check-in')} style={styles.historyBtn}>
+                    <Text style={styles.historyBtnText}>History</Text>
+                  </TouchableOpacity>
+                  <Text style={[styles.smallMuted, { marginTop: 8 }]}>{isCheckedIn ? 'Clocked In' : 'Not Clocked In'}</Text>
                 </View>
               </View>
             </View>
 
             <View style={styles.dashboardDivider} />
 
-            <View style={styles.checkInOutRow}>
-              <View style={{ alignItems: 'flex-start' }}>
-                <Text style={{ fontSize: 11, fontWeight: '800', color: '#4CAF50', marginBottom: 2 }}>Check In</Text>
-                <Text style={{ fontSize: 10, color: C.gray600, fontWeight: '600' }}>{new Date().toLocaleDateString([], { day: '2-digit', month: '2-digit', year: 'numeric' })}</Text>
-                <Text style={{ fontSize: 13, fontWeight: '800', color: C.gray900 }}>{dashboardData.checkIn || '--:--'}</Text>
+            <View style={styles.checkInOutRowCompact}>
+              <View style={[styles.checkBlock, { alignItems: 'flex-start' }]}>
+                <Text style={styles.checkLabel}>Check In</Text>
+                <Text style={styles.checkValue}>{dashboardData.checkIn || '--:--'}</Text>
               </View>
 
-              <IconSymbol name="arrow.right" size={16} color={C.gray200} />
+              <View style={styles.iconCenter}>
+                <IconSymbol name="arrow.right" size={18} color={C.gray200} />
+              </View>
 
-              <View style={{ alignItems: 'flex-end' }}>
-                <Text style={{ fontSize: 11, fontWeight: '800', color: '#FF5252', marginBottom: 2 }}>Check Out</Text>
-                <Text style={{ fontSize: 10, color: C.gray600, fontWeight: '600' }}>{new Date().toLocaleDateString([], { day: '2-digit', month: '2-digit', year: 'numeric' })}</Text>
-                <Text style={{ fontSize: 13, fontWeight: '800', color: C.gray900 }}>{dashboardData.checkOut || '--:--'}</Text>
+              <View style={[styles.checkBlock, { alignItems: 'flex-end' }]}>
+                <Text style={styles.checkLabel}>Check Out</Text>
+                <Text style={styles.checkValue}>{dashboardData.checkOut || '--:--'}</Text>
               </View>
             </View>
+
+            <View style={{ marginTop: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <View>
+                <Text style={styles.statLabel}>Present days</Text>
+                <Text style={styles.statValue}>{dashboardData.presentDays}</Text>
+              </View>
+              {!isCheckedIn ? (
+                <TouchableOpacity onPress={handlePunch} style={styles.punchBtn} disabled={isPunching} accessibilityRole="button" accessibilityLabel="Punch in">
+                  {isPunching ? <ActivityIndicator color="#fff" /> : <Text style={styles.punchTxt}>Punch In</Text>}
+                </TouchableOpacity>
+              ) : (
+                <View style={styles.checkedPill} accessibilityRole="text" accessibilityLabel="Checked in">
+                  <Text style={styles.checkedTxt}>Checked In</Text>
+                </View>
+              )}
+            </View>
+            {loading && (
+              <View style={styles.loadingOverlay} pointerEvents="none">
+                <ActivityIndicator size="large" color={C.primary} />
+                <Text style={{ marginTop: 10, color: C.gray600, fontWeight: '700' }}>Loading dashboard...</Text>
+              </View>
+            )}
+          </View>
           </View>
 
           {/* Stats Row */}
@@ -663,7 +738,7 @@ export default function HomeScreen() {
 
           {/* Quick Actions */}
           <Text style={styles.sectionTitle}>Quick actions</Text>
-          <View style={styles.quickActionsGrid}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 6, gap: 8 }} style={{ marginBottom: 18 }}>
             <ActionItem icon="calendar.badge.plus" label="Apply Leave" color="#7986CB" onPress={() => router.push('/apply-leave')} />
             <ActionItem icon="door.right.hand.open" label="Gate Pass" color="#4FC3F7" onPress={() => router.push('/gate-pass')} />
             <ActionItem icon="wallet.pass.fill" label="Expense" color="#81C784" onPress={() => router.push('/expense')} />
@@ -674,7 +749,7 @@ export default function HomeScreen() {
             <ActionItem icon="building.2.fill" label="Asset" color="#90A4AE" onPress={() => router.push('/asset')} />
             <ActionItem icon="doc.text.fill" label="Policy" color="#FF8A65" />
             <ActionItem icon="star.fill" label="Feedback" color="#FFF176" onPress={() => router.push('/feedback')} />
-          </View>
+          </ScrollView>
 
           {/* Attendance Details */}
           <View style={styles.sectionHeader}>
