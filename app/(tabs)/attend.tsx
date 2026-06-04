@@ -1,4 +1,7 @@
+import Card from '@/components/ui/card';
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import { getUIColors } from '@/constants/ui';
+import { apiFetch, apiJson } from '@/services/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router, useFocusEffect } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
@@ -10,6 +13,7 @@ const { width } = Dimensions.get('window');
 
 export default function AttendanceDetailsScreen() {
   const { isDarkMode } = useTheme();
+  const C = getUIColors(isDarkMode);
   const [selectedDay, setSelectedDay] = useState(new Date().getDate());
   const [stats, setStats] = useState({ present: 0, absent: 0, late: 0 });
   const [loading, setLoading] = useState(false);
@@ -48,11 +52,8 @@ export default function AttendanceDetailsScreen() {
           const toDate = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}-${new Date(selectedYear, selectedMonth + 1, 0).getDate()}`;
 
           // Fetch Attendance Status - using only this API per user request
-          const attendRes = await fetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_attendance', {
-            credentials: 'include',
-            method: 'POST',
-            headers: commonHeaders,
-            body: JSON.stringify({ employee: userId.trim(), from_date: fromDate, to_date: toDate })
+          const attendRes = await apiFetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_attendance', {
+            method: 'POST', body: { employee: userId.trim(), from_date: fromDate, to_date: toDate }
           });
 
           let finalAttendLogs = [];
@@ -77,17 +78,11 @@ export default function AttendanceDetailsScreen() {
 
           // Also fetch employee check-ins (used by dashboard) to derive IN/OUT when attendance API lacks times
           try {
-            const checkRes = await fetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_employee_checkins', {
-              credentials: 'include',
-              method: 'POST',
-              headers: commonHeaders,
-              body: JSON.stringify({ employee: userId.trim() })
-            });
+            const { res: checkRes, json: checkData } = await apiJson('https://staging.microcrispr.com/api/method/hrms_application.api.get_employee_checkins', { method: 'POST', body: { employee: userId.trim() } });
 
             if (checkRes) {
               try {
                 const checkStatus = checkRes.status;
-                const checkData = await checkRes.json().catch(() => ({}));
                 const extractLogs = (res: any): any[] => {
                 if (!res) return [];
                 if (Array.isArray(res)) return res;
@@ -207,25 +202,7 @@ export default function AttendanceDetailsScreen() {
     }, [selectedMonth, selectedYear, selectedDay])
   );
 
-  const C = {
-    primary: '#4361EE',
-    success: '#10B981',
-    danger: '#EF4444',
-    warning: '#F59E0B',
-    bg: isDarkMode ? '#0B0E14' : '#F8F9FB',
-    card: isDarkMode ? '#161B22' : '#FFFFFF',
-    text: isDarkMode ? '#F8F9FB' : '#0F172A',
-    subText: isDarkMode ? '#94A3B8' : '#64748B',
-    white: '#FFFFFF',
-    dark: isDarkMode ? '#050505' : '#1B1B2F',
-    gray50: isDarkMode ? '#1F2937' : '#F8F9FA',
-    gray100: isDarkMode ? '#374151' : '#F1F3F5',
-    // softer/tinted icon colors
-    primarySoft: '#4361EEAA',
-    successSoft: '#10B981AA',
-    dangerSoft: '#EF4444AA',
-    warningSoft: '#F59E0BAA',
-  };
+  
 
   const months = [
     'January', 'February', 'March', 'April', 'May', 'June',
@@ -658,7 +635,7 @@ export default function AttendanceDetailsScreen() {
            <Text style={[styles.sectionTitle, { color: C.text }]}>Day Details - {months[selectedMonth]} {selectedDay}</Text>
         </View>
 
-        <View style={[styles.detailCard, { backgroundColor: C.card }]}>
+        <Card style={[styles.detailCard, { backgroundColor: C.card }]}>
            <View style={styles.detailRow}>
               <View style={styles.detailItem}>
                       <View style={[styles.detailIcon, { backgroundColor: C.primary + '10' }]}>
@@ -702,7 +679,7 @@ export default function AttendanceDetailsScreen() {
                  </View>
               </View>
            </View>
-        </View>
+        </Card>
 
         <View style={styles.sectionHeader}>
            <Text style={[styles.sectionTitle, { color: C.text }]}>Who's Working Now</Text>
