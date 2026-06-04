@@ -1,4 +1,8 @@
+import Card from '@/components/ui/card';
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import Skeleton from '@/components/ui/skeleton';
+import { getUIColors } from '@/constants/ui';
+import { apiFetch, apiJson } from '@/services/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router, useFocusEffect } from 'expo-router';
 import React, { useCallback, useState } from 'react';
@@ -24,24 +28,7 @@ const { width } = Dimensions.get('window');
 export default function HomeScreen() {
   const { isDarkMode } = useTheme();
 
-  // modern neutral palette tuned for enterprise look
-  const C = {
-    primary: '#2563EB',
-    accent: '#7C3AED',
-    dark: isDarkMode ? '#060611' : '#0F1724',
-    white: isDarkMode ? '#0B1220' : '#FFFFFF',
-    gray50: isDarkMode ? '#0F1724' : '#FAFBFD',
-    gray100: isDarkMode ? '#0B1220' : '#F3F4F6',
-    gray200: isDarkMode ? '#111827' : '#E6EEF8',
-    gray400: isDarkMode ? '#4B5563' : '#9CA3AF',
-    gray600: isDarkMode ? '#9AA4B2' : '#6B7280',
-    gray900: isDarkMode ? '#E6EEF8' : '#111827',
-    success: '#10B981',
-    danger: '#EF4444',
-    warning: '#F59E0B',
-    bg: isDarkMode ? '#05060A' : '#F6F9FC',
-    card: isDarkMode ? '#071023' : '#FFFFFF'
-  };
+  const C = getUIColors(isDarkMode);
 
   const [userName, setUserName] = useState('');
   const [isCalendarVisible, setIsCalendarVisible] = useState(false);
@@ -122,11 +109,9 @@ export default function HomeScreen() {
       const firstDay = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
       const lastDay = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()}`;
       
-      const attendResponse = await fetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_attendance', {
-        credentials: 'include',
+      const attendResponse = await apiFetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_attendance', {
         method: 'POST',
-        headers: commonHeaders,
-        body: JSON.stringify({ employee: userId.trim(), from_date: firstDay, to_date: lastDay })
+        body: { employee: userId.trim(), from_date: firstDay, to_date: lastDay }
       });
 
       let presentCount = 0;
@@ -143,23 +128,11 @@ export default function HomeScreen() {
         presentCount = presentDates.size;
       }
 
-      const response = await fetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_employee_checkins', {
-        credentials: 'include',
-        method: 'POST',
-        headers: commonHeaders,
-        body: JSON.stringify({ employee: userId.trim() })
+      const { res: response, json: result } = await apiJson('https://staging.microcrispr.com/api/method/hrms_application.api.get_employee_checkins', {
+        method: 'POST', body: { employee: userId.trim() }
       });
 
-      if (response.status === 417 || response.status === 401) {
-        console.warn("⚠️ Session expired (417/401). Redirecting to login...");
-        await AsyncStorage.multiRemove(['user_token', 'user_id', 'employee_details']);
-        router.replace('/');
-        return;
-      }
-
       if (!response.ok) return;
-
-      const result = await response.json();
       
       const extractLogs = (res: any): any[] => {
         if (!res) return [];
@@ -232,14 +205,8 @@ export default function HomeScreen() {
       }
 
       // Employee Details
-      const detailsRes = await fetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_employee_details', {
-        credentials: 'include',
-        method: 'POST',
-        headers: commonHeaders,
-        body: JSON.stringify({ employee: userId.trim() })
-      });
+      const { res: detailsRes, json: detailsData } = await apiJson('https://staging.microcrispr.com/api/method/hrms_application.api.get_employee_details', { method: 'POST', body: { employee: userId.trim() } });
       if (detailsRes.ok) {
-        const detailsData = await detailsRes.json();
         if (detailsData.message?.employee_name) setUserName(detailsData.message.employee_name);
       }
     } catch (e) {
@@ -287,20 +254,9 @@ export default function HomeScreen() {
 
       const punchType = isCheckedIn ? 'OUT' : 'IN';
 
-      const response = await fetch('https://staging.microcrispr.com/api/method/hrms_application.api.employee_checkin', {
-        credentials: 'include',
+      const response = await apiFetch('https://staging.microcrispr.com/api/method/hrms_application.api.employee_checkin', {
         method: 'POST',
-        headers: {
-          'Authorization': authHeader,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          employee: userId.trim(),
-          log_type: punchType,
-          timestamp: new Date().toISOString(),
-          location: 'Mobile Dashboard'
-        })
+        body: { employee: userId.trim(), log_type: punchType, timestamp: new Date().toISOString(), location: 'Mobile Dashboard' }
       });
 
       if (response.ok) {
@@ -654,13 +610,17 @@ export default function HomeScreen() {
           </View>
 
           {/* Main Dashboard Card */}
-          <View style={[styles.dashboardCard, { backgroundColor: C.card }]}>
+          <Card style={[styles.dashboardCard, { backgroundColor: C.card }]}>
             <View style={{ position: 'relative' }}>
             <View style={styles.timerContainerLarge}>
               <View style={styles.timerHeaderLarge}>
                 <View>
                   <Text style={styles.timerLabel}>Total Worked</Text>
-                  <Text style={styles.timerBig}>{dashboardData.workedHours}</Text>
+                  {loading ? (
+                    <Skeleton width={160} height={34} style={{ borderRadius: 8 }} />
+                  ) : (
+                    <Text style={styles.timerBig}>{dashboardData.workedHours}</Text>
+                  )}
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>
                   <TouchableOpacity onPress={() => router.push('/check-in')} style={styles.historyBtn}>
@@ -673,10 +633,10 @@ export default function HomeScreen() {
 
             <View style={styles.dashboardDivider} />
 
-            <View style={styles.checkInOutRowCompact}>
+              <View style={styles.checkInOutRowCompact}>
               <View style={[styles.checkBlock, { alignItems: 'flex-start' }]}>
                 <Text style={styles.checkLabel}>Check In</Text>
-                <Text style={styles.checkValue}>{dashboardData.checkIn || '--:--'}</Text>
+                {loading ? <Skeleton width={60} height={18} /> : <Text style={styles.checkValue}>{dashboardData.checkIn || '--:--'}</Text>}
               </View>
 
               <View style={styles.iconCenter}>
@@ -685,14 +645,14 @@ export default function HomeScreen() {
 
               <View style={[styles.checkBlock, { alignItems: 'flex-end' }]}>
                 <Text style={styles.checkLabel}>Check Out</Text>
-                <Text style={styles.checkValue}>{dashboardData.checkOut || '--:--'}</Text>
+                {loading ? <Skeleton width={60} height={18} /> : <Text style={styles.checkValue}>{dashboardData.checkOut || '--:--'}</Text>}
               </View>
             </View>
 
             <View style={{ marginTop: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
               <View>
                 <Text style={styles.statLabel}>Present days</Text>
-                <Text style={styles.statValue}>{dashboardData.presentDays}</Text>
+                {loading ? <Skeleton width={48} height={20} /> : <Text style={styles.statValue}>{dashboardData.presentDays}</Text>}
               </View>
               {!isCheckedIn ? (
                 <TouchableOpacity onPress={handlePunch} style={styles.punchBtn} disabled={isPunching} accessibilityRole="button" accessibilityLabel="Punch in">
@@ -704,36 +664,46 @@ export default function HomeScreen() {
                 </View>
               )}
             </View>
-            {loading && (
-              <View style={styles.loadingOverlay} pointerEvents="none">
-                <ActivityIndicator size="large" color={C.primary} />
-                <Text style={{ marginTop: 10, color: C.gray600, fontWeight: '700' }}>Loading dashboard...</Text>
-              </View>
-            )}
-          </View>
-          </View>
+            </View>
+          </Card>
 
           {/* Stats Row */}
           <View style={styles.statsRow}>
-            <TouchableOpacity style={styles.statCard} onPress={() => setIsCalendarVisible(true)}>
-              <View style={[styles.statIconContainer, { backgroundColor: isDarkMode ? '#1E293B' : '#F0F3FF' }]}>
-                <IconSymbol name="calendar" size={20} color={C.primary} />
-              </View>
-              <View>
-                <Text style={styles.statValue}>{dashboardData.presentDays}</Text>
-                <Text style={styles.statLabel}>Present days</Text>
-              </View>
-            </TouchableOpacity>
+            {loading ? (
+              <>
+                <View style={[styles.statCard, { justifyContent: 'center', alignItems: 'center' }]}> 
+                  <Skeleton width={36} height={36} style={{ borderRadius: 10, marginBottom: 8 }} />
+                  <Skeleton width={80} height={20} />
+                </View>
 
-            <TouchableOpacity style={styles.statCard} onPress={() => router.push('/leave')}>
-              <View style={[styles.statIconContainer, { backgroundColor: isDarkMode ? '#1E293B' : '#E8F5E9' }]}>
-                <IconSymbol name="location.fill" size={20} color={C.success} />
-              </View>
-              <View>
-                <Text style={styles.statValue}>{dashboardData.leaveBalance}</Text>
-                <Text style={styles.statLabel}>Leave balance</Text>
-              </View>
-            </TouchableOpacity>
+                <View style={[styles.statCard, { justifyContent: 'center', alignItems: 'center' }]}> 
+                  <Skeleton width={36} height={36} style={{ borderRadius: 10, marginBottom: 8 }} />
+                  <Skeleton width={80} height={20} />
+                </View>
+              </>
+            ) : (
+              <>
+              <TouchableOpacity style={styles.statCard} onPress={() => setIsCalendarVisible(true)}>
+                <View style={[styles.statIconContainer, { backgroundColor: isDarkMode ? '#1E293B' : '#F0F3FF' }]}>
+                  <IconSymbol name="calendar" size={20} color={C.primary} />
+                </View>
+                <View>
+                  <Text style={styles.statValue}>{dashboardData.presentDays}</Text>
+                  <Text style={styles.statLabel}>Present days</Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.statCard} onPress={() => router.push('/leave')}>
+                <View style={[styles.statIconContainer, { backgroundColor: isDarkMode ? '#1E293B' : '#E8F5E9' }]}>
+                  <IconSymbol name="location.fill" size={20} color={C.success} />
+                </View>
+                <View>
+                  <Text style={styles.statValue}>{dashboardData.leaveBalance}</Text>
+                  <Text style={styles.statLabel}>Leave balance</Text>
+                </View>
+              </TouchableOpacity>
+              </>
+            )}
           </View>
 
           {/* Quick Actions */}
