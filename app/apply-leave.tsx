@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Modal, Pressable, FlatList, StatusBar, Alert, ActivityIndicator, Dimensions, Platform } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useTheme } from '../context/ThemeContext';
+import { getSecureToken } from '../services/secureStore';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import { router } from 'expo-router';
+import React, { useState } from 'react';
+import { ActivityIndicator, Alert, Dimensions, FlatList, Modal, Platform, Pressable, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useTheme } from '../context/ThemeContext';
+import { apiJson } from '../services/api';
 import { leaveApi } from '../services/leaveApi';
 
 const { width, height } = Dimensions.get('window');
@@ -61,27 +63,74 @@ export default function ApplyLeaveScreen() {
   const [loadingConfig, setLoadingConfig] = useState(true);
 
   React.useEffect(() => {
+    const applyLeaveApprover = (employeeDetails: any) => {
+      const approver = employeeDetails?.leave_approver;
+      if (!approver) return;
+
+      const approverValue =
+        typeof approver === 'string'
+          ? approver
+          : approver.email || approver.name || approver.employee_name || '';
+
+      if (!approverValue) return;
+
+      setMailingTo(
+        typeof approver === 'object'
+          ? approver.employee_name || approver.name || approver.email || approverValue
+          : approverValue
+      );
+      setMailingToEmail(approverValue);
+      setApprovers([
+        {
+          name: approverValue,
+          email: approverValue,
+          employee_name:
+            typeof approver === 'object'
+              ? approver.employee_name || approver.name || approver.email || approverValue
+              : approverValue,
+        },
+      ]);
+    };
+
     const loadConfig = async () => {
+      // Fetch leave types in parallel so they do not block cache retrieval
+      leaveApi.getLeaveTypes()
+        .then((types) => {
+          if (types && types.length > 0) {
+            const mapped = types.map((t: any) => ({
+              label: t.leave_type_name || t.name,
+              icon: getLeaveIcon(t.leave_type_name || t.name),
+              color: getLeaveColor(t.leave_type_name || t.name)
+            }));
+            setDynamicLeaveTypes(mapped);
+            if (mapped[0]) setLeaveType(mapped[0].label);
+          }
+        })
+        .catch((err) => {
+          console.warn('Failed to load dynamic leave types:', err);
+        });
+
+      // Fetch employee details (cache first, then network)
       try {
-        const types = await leaveApi.getLeaveTypes();
-        if (types && types.length > 0) {
-          const mapped = types.map((t: any) => ({
-            label: t.leave_type_name || t.name,
-            icon: getLeaveIcon(t.leave_type_name || t.name),
-            color: getLeaveColor(t.leave_type_name || t.name)
-          }));
-          setDynamicLeaveTypes(mapped);
-          if (mapped[0]) setLeaveType(mapped[0].label);
+        const cached = await AsyncStorage.getItem('employee_details');
+        if (cached) {
+          applyLeaveApprover(JSON.parse(cached));
+        }
+
+        const userId = await AsyncStorage.getItem('user_id');
+        if (userId) {
+          const { res, json } = await apiJson(
+            'https://staging.microcrispr.com/api/method/hrms_application.api.get_employee_details',
+            { method: 'POST', body: { employee: userId.trim() } }
+          );
+
+          if (res.ok && json.message) {
+            await AsyncStorage.setItem('employee_details', JSON.stringify(json.message));
+            applyLeaveApprover(json.message);
+          }
         }
       } catch (err) {
-        console.warn('Failed to load dynamic leave types:', err);
-      }
-
-      try {
-        const apps = await leaveApi.getLeaveApprovers();
-        setApprovers(apps || []);
-      } catch (err) {
-        console.warn('Failed to load leave approvers:', err);
+        console.warn('Failed to load leave approver from employee details:', err);
       } finally {
         setLoadingConfig(false);
       }
@@ -128,7 +177,7 @@ export default function ApplyLeaveScreen() {
     } else if (Platform.OS === 'web') {
       setShowNativeDatePicker(false);
     }
-    
+
     if (selectedDate) {
       if (pickerType === 'start') setStartDate(selectedDate);
       else if (pickerType === 'end') setEndDate(selectedDate);
@@ -148,7 +197,7 @@ export default function ApplyLeaveScreen() {
     }
 
     try {
-      const token = await AsyncStorage.getItem('user_token');
+      const token = await getSecureToken();
       const userId = await AsyncStorage.getItem('user_id');
 
       // Critical Checks
@@ -187,7 +236,7 @@ export default function ApplyLeaveScreen() {
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
-          'Authorization': token.trim().replace(/^(bearer|token)\s+/i, ''),
+          'Authorization': token.trim(),
         },
         body: JSON.stringify(payload),
       });
@@ -273,13 +322,13 @@ export default function ApplyLeaveScreen() {
             )}
           </View>
 
-          <TouchableOpacity 
+          <TouchableOpacity
             style={[styles.halfDayToggle, { backgroundColor: isHalfDay ? C.primary + '10' : C.gray50, borderColor: isHalfDay ? C.primary : C.gray100 }]}
             onPress={() => setIsHalfDay(!isHalfDay)}
           >
             <View style={styles.halfDayLeft}>
-               <View style={[styles.toggleCircle, { backgroundColor: isHalfDay ? C.primary : C.gray400 }]} />
-               <Text style={[styles.halfDayText, { color: isHalfDay ? C.primary : C.gray900 }]}>Apply for Half Day</Text>
+              <View style={[styles.toggleCircle, { backgroundColor: isHalfDay ? C.primary : C.gray400 }]} />
+              <Text style={[styles.halfDayText, { color: isHalfDay ? C.primary : C.gray900 }]}>Apply for Half Day</Text>
             </View>
             {isHalfDay && <IconSymbol name="checkmark.circle.fill" size={20} color={C.primary} />}
           </TouchableOpacity>
@@ -319,8 +368,8 @@ export default function ApplyLeaveScreen() {
             <Text style={[styles.sectionTitle, { color: C.gray900 }]}>Mailing To</Text>
           </View>
 
-          <TouchableOpacity 
-            style={[styles.typeSelect, { backgroundColor: C.gray50, borderColor: C.gray100, marginBottom: 0 }]} 
+          <TouchableOpacity
+            style={[styles.typeSelect, { backgroundColor: C.gray50, borderColor: C.gray100, marginBottom: 0 }]}
             onPress={() => openPicker('mailing')}
           >
             <View>
@@ -361,12 +410,12 @@ export default function ApplyLeaveScreen() {
               <Text style={[styles.pickerTitle, { color: C.gray900, marginBottom: 20, fontSize: 18 }]}>
                 Select {pickerType === 'start' ? 'Start' : 'End'} Date
               </Text>
-              <input 
-                type="date" 
-                style={{ 
-                  width: '100%', 
-                  padding: '14px', 
-                  borderRadius: '12px', 
+              <input
+                type="date"
+                style={{
+                  width: '100%',
+                  padding: '14px',
+                  borderRadius: '12px',
                   border: `2px solid ${C.primary}40`,
                   fontSize: '16px',
                   fontFamily: 'inherit',
@@ -382,7 +431,7 @@ export default function ApplyLeaveScreen() {
                   }
                 }}
               />
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.submitBtn, { marginHorizontal: 0, marginTop: 25, height: 50, borderRadius: 12 }]}
                 onPress={() => setShowNativeDatePicker(false)}
               >
@@ -462,7 +511,7 @@ export default function ApplyLeaveScreen() {
                       }}
                       autoFocus
                     />
-                    <TouchableOpacity 
+                    <TouchableOpacity
                       style={[styles.submitBtn, { marginHorizontal: 0, height: 50, borderRadius: 12 }]}
                       onPress={() => setPickerVisible(false)}
                     >

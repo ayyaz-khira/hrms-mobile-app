@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getSecureToken } from '../services/secureStore';
 import { useTheme } from '../context/ThemeContext';
 
 export default function PersonalDetailsScreen() {
@@ -52,7 +53,7 @@ export default function PersonalDetailsScreen() {
         }
 
         // 2. Fetch fresh data from API
-        const token = await AsyncStorage.getItem('user_token');
+        const token = await getSecureToken();
         const userId = await AsyncStorage.getItem('user_id');
 
         const response = await fetch(
@@ -60,7 +61,7 @@ export default function PersonalDetailsScreen() {
           {
             method: 'POST',
             headers: {
-              'Authorization': token ? token.trim().replace(/^(bearer|token)\s+/i, '') : '',
+              'Authorization': token ? token.trim() : '',
               'Content-Type': 'application/json',
               Accept: 'application/json',
             },

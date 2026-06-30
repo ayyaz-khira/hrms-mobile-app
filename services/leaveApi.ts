@@ -1,14 +1,14 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getSecureToken, setSecureToken } from './secureStore';
 import { LeaveRequest, LeaveBalance, LeaveType } from '../types/leave';
 
 const BASE_URL = 'https://staging.microcrispr.com/api/method/hrms_application.api';
 
 const getHeaders = async () => {
-  const token = await AsyncStorage.getItem('user_token');
+  const token = await getSecureToken();
   if (!token) throw new Error('No authentication token found');
 
-  const rawToken = token.trim();
-  const authHeader = rawToken.replace(/^(bearer|token)\s+/i, '');
+  const authHeader = token.trim();
 
   return {
     'Authorization': authHeader,
@@ -49,7 +49,7 @@ export const leaveApi = {
       const result = await response.json();
       const token = result.message?.token;
       if (!token) throw new Error('Token not found in login response');
-      await AsyncStorage.setItem('user_token', token);
+      await setSecureToken(token);
       return true;
     } catch (error) {
       console.error('Login error:', error);

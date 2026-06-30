@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import React, { useRef, useState } from 'react';
 import { useLeaveStore } from '../store/leaveStore';
+import { getSecureToken, setSecureToken, deleteSecureToken } from '../services/secureStore';
 import {
   ActivityIndicator,
   Animated,
@@ -111,7 +112,7 @@ export default function NessScaleLogin() {
   React.useEffect(() => {
     const checkAuth = async () => {
       try {
-        const token = await AsyncStorage.getItem('user_token');
+        const token = await getSecureToken();
         const userId = await AsyncStorage.getItem('user_id');
         if (token && userId) {
           try {
@@ -198,7 +199,7 @@ export default function NessScaleLogin() {
         }
         
         console.warn('🔑 [DEBUG] Token Captured:', token);
-        await AsyncStorage.setItem('user_token', token);
+        await setSecureToken(token);
 
         // Fetch all user details including roles using the new GET API
         try {
@@ -207,7 +208,7 @@ export default function NessScaleLogin() {
             credentials: 'omit',
             method: 'GET',
             headers: {
-              'Authorization': token.trim().replace(/^(bearer|token)\s+/i, ''),
+              'Authorization': token.trim(),
               'Content-Type': 'application/json',
               'Accept': 'application/json',
             }
@@ -221,7 +222,8 @@ export default function NessScaleLogin() {
             console.error('❌ [DEBUG] User details fetch failed:', detailError);
             setDiagnostics({ loginUrl: apiUrl, loginStatus: response.status, loginBody: result, detailsUrl, detailsStatus: detailsResponse.status, detailsBody: detailsResult, error: detailError });
             showToast(`Auth verification failed: ${detailError}`, false);
-            await AsyncStorage.multiRemove(['user_token', 'user_id', 'employee_details']);
+            await deleteSecureToken();
+            await AsyncStorage.multiRemove(['user_id', 'employee_details']);
             setLoading(false);
             return;
           }
@@ -247,7 +249,8 @@ export default function NessScaleLogin() {
           console.error('Failed to fetch details after login:', err);
           setDiagnostics({ loginUrl: apiUrl, loginStatus: response.status, loginBody: result, detailsUrl: 'https://staging.microcrispr.com/api/method/hrms_application.api.get_user_details', error: err.message || err });
           showToast(`Network error validating session: ${err.message || err}`, false);
-          await AsyncStorage.multiRemove(['user_token', 'user_id', 'employee_details']);
+          await deleteSecureToken();
+          await AsyncStorage.multiRemove(['user_id', 'employee_details']);
           setLoading(false);
           return;
         }

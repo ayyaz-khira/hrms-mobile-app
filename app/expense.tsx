@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, StatusBar, Platform, Modal, Image, Pressable } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { router } from 'expo-router';
+import React, { useEffect, useState } from 'react';
+import { Image, Modal, Pressable, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getSecureToken } from '../services/secureStore';
 
 export default function ExpenseScreen() {
   const { isDarkMode } = useTheme();
@@ -19,12 +19,12 @@ export default function ExpenseScreen() {
   useEffect(() => {
     const fetchExpenses = async () => {
       try {
-        const token = await AsyncStorage.getItem('user_token');
+        const token = await getSecureToken();
         const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'https://api.minix.com';
 
         const response = await fetch(`${apiUrl}/employee/expenses`, {
           headers: {
-            'Authorization': token ? token.trim().replace(/^(bearer|token)\s+/i, '') : '',
+            'Authorization': token ? token.trim() : '',
             'Accept': 'application/json',
           }
         });

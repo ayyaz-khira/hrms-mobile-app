@@ -1,17 +1,17 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
+import { getSecureToken, deleteSecureToken } from './secureStore';
 
 const DEFAULT_RETRY = 1;
 
 export const getAuthHeader = async (): Promise<string | null> => {
-  const rawToken = await AsyncStorage.getItem('user_token');
-  if (!rawToken) return null;
-  return rawToken.trim().replace(/^(bearer|token)\s+/i, '');
+  return await getSecureToken();
 };
 
 const handleUnauthorized = async (status: number) => {
   if (status === 401 || status === 417) {
-    await AsyncStorage.multiRemove(['user_token', 'user_id', 'employee_details']);
+    await deleteSecureToken();
+    await AsyncStorage.multiRemove(['user_id', 'employee_details']);
     try { router.replace('/'); } catch (e) { console.warn('Router replace failed', e); }
   }
 };
@@ -35,7 +35,7 @@ export async function apiFetch(input: string, options: { method?: string; body?:
     credentials: 'include' as RequestCredentials,
     method,
     headers: commonHeaders,
-    body: typeof body === 'string' || body instanceof String ? body : body ? JSON.stringify(body) : undefined,
+    body: typeof body === 'string' ? body : body ? JSON.stringify(body) : undefined,
   };
 
   let attempts = 0;

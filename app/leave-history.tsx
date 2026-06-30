@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, FlatList, StatusBar, ActivityIndicator, Image } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { router } from 'expo-router';
-import { useTheme } from '../context/ThemeContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { router } from 'expo-router';
+import React, { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, FlatList, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useTheme } from '../context/ThemeContext';
+import { getSecureToken } from '../services/secureStore';
 
 export default function LeaveHistoryScreen() {
   const { isDarkMode } = useTheme();
@@ -14,7 +15,7 @@ export default function LeaveHistoryScreen() {
   const fetchHistory = useCallback(async () => {
     try {
       setLoading(true);
-      const token = await AsyncStorage.getItem('user_token');
+      const token = await getSecureToken();
       const userId = await AsyncStorage.getItem('user_id');
 
       if (!token || !userId) {
@@ -22,9 +23,7 @@ export default function LeaveHistoryScreen() {
         return;
       }
 
-      // Smart Auth Header
-      const rawToken = token.trim();
-      const authHeader = rawToken.replace(/^(bearer|token)\s+/i, '');
+      const authHeader = token.trim();
 
       const response = await fetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_leave_applications', {
         credentials: 'include',
@@ -43,7 +42,7 @@ export default function LeaveHistoryScreen() {
         const result = await response.json();
         const message = result.message;
         const data = message?.data || (Array.isArray(message) ? message : []);
-        
+
         if (Array.isArray(data)) {
           const mapped = data.map((l: any, index: number) => ({
             id: String(l.name || index),
@@ -86,7 +85,7 @@ export default function LeaveHistoryScreen() {
   return (
     <View style={[styles.mainContainer, { backgroundColor: C.bg }]}>
       <StatusBar barStyle="light-content" backgroundColor={C.dark} />
-      
+
       {/* Stabilized Header */}
       <View style={styles.headerContainer}>
         <View style={[styles.headerBg, { backgroundColor: C.dark }]}>
@@ -122,32 +121,32 @@ export default function LeaveHistoryScreen() {
             </View>
           }
           renderItem={({ item }) => (
-          <TouchableOpacity style={[styles.requestCard, { backgroundColor: C.card }]}>
-            <View style={[styles.statusStrip, { backgroundColor: item.color }]} />
-            <View style={styles.cardMain}>
-              <View style={styles.cardHeader}>
-                <Text style={[styles.leaveType, { color: C.text }]}>{item.type}</Text>
-                <View style={[styles.statusBadge, { backgroundColor: item.color + '15' }]}>
-                  <Text style={[styles.statusText, { color: item.color }]}>{item.status}</Text>
+            <TouchableOpacity style={[styles.requestCard, { backgroundColor: C.card }]}>
+              <View style={[styles.statusStrip, { backgroundColor: item.color }]} />
+              <View style={styles.cardMain}>
+                <View style={styles.cardHeader}>
+                  <Text style={[styles.leaveType, { color: C.text }]}>{item.type}</Text>
+                  <View style={[styles.statusBadge, { backgroundColor: item.color + '15' }]}>
+                    <Text style={[styles.statusText, { color: item.color }]}>{item.status}</Text>
+                  </View>
+                </View>
+                <View style={styles.cardDetails}>
+                  <View style={styles.detailItem}>
+                    <IconSymbol name="calendar" size={14} color={C.subText} />
+                    <Text style={[styles.detailText, { color: C.subText }]}>{item.range}</Text>
+                  </View>
+                  <View style={styles.detailItem}>
+                    <IconSymbol name="clock.fill" size={14} color={C.subText} />
+                    <Text style={[styles.detailText, { color: C.subText }]}>{item.days}</Text>
+                  </View>
+                </View>
+                <View style={[styles.cardFooter, { borderTopColor: C.gray100 }]}>
+                  <Text style={[styles.appliedDate, { color: C.subText }]}>{item.date}</Text>
+                  <IconSymbol name="chevron.right" size={14} color={C.subText} />
                 </View>
               </View>
-              <View style={styles.cardDetails}>
-                <View style={styles.detailItem}>
-                  <IconSymbol name="calendar" size={14} color={C.subText} />
-                  <Text style={[styles.detailText, { color: C.subText }]}>{item.range}</Text>
-                </View>
-                <View style={styles.detailItem}>
-                  <IconSymbol name="clock.fill" size={14} color={C.subText} />
-                  <Text style={[styles.detailText, { color: C.subText }]}>{item.days}</Text>
-                </View>
-              </View>
-              <View style={[styles.cardFooter, { borderTopColor: C.gray100 }]}>
-                <Text style={[styles.appliedDate, { color: C.subText }]}>{item.date}</Text>
-                <IconSymbol name="chevron.right" size={14} color={C.subText} />
-              </View>
-            </View>
-          </TouchableOpacity>
-        )}
+            </TouchableOpacity>
+          )}
         />
       )}
     </View>

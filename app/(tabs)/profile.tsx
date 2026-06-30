@@ -6,6 +6,7 @@ import React, { useCallback, useState } from 'react';
 import { Dimensions, Image, Modal, Pressable, ScrollView, StatusBar, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../context/ThemeContext';
+import { deleteSecureToken, getSecureToken } from '../../services/secureStore';
 import { useLeaveStore } from '../../store/leaveStore';
 
 const { width } = Dimensions.get('window');
@@ -19,10 +20,7 @@ export default function ProfileScreen() {
   const [loading, setLoading] = useState(false);
 
   const getAuthHeader = async (): Promise<string | null> => {
-    const rawToken = await AsyncStorage.getItem('user_token');
-    if (!rawToken) return null;
-    const token = rawToken.trim();
-    return token.replace(/^(bearer|token)\s+/i, '');
+    return await getSecureToken();
   };
 
   useFocusEffect(
@@ -111,7 +109,8 @@ export default function ProfileScreen() {
 
   const handleLogout = async () => {
     try {
-      await AsyncStorage.multiRemove(['user_token', 'user_id', 'user_name', 'profile_image']);
+      await deleteSecureToken();
+      await AsyncStorage.multiRemove(['user_id', 'user_name', 'profile_image']);
       clearStore();
     } catch (error) {
       console.error('Error during logout:', error);
@@ -185,7 +184,7 @@ export default function ProfileScreen() {
 
         <View style={styles.statsGrid}>
           <View style={[styles.statItem, { backgroundColor: C.card, borderWidth: 1, borderColor: C.gray100 }]}>
-            <Text style={[styles.statValue, { color: C.text }]}> 
+            <Text style={[styles.statValue, { color: C.text }]}>
               {employeeDetails?.date_of_joining
                 ? new Date(employeeDetails.date_of_joining).toLocaleDateString([], { day: '2-digit', month: 'short' })
                 : '-- --'}
@@ -199,7 +198,7 @@ export default function ProfileScreen() {
             <Text style={[styles.statLabel, { color: C.subText }]}>Dept</Text>
           </View>
           <View style={[styles.statItem, { backgroundColor: C.card, borderWidth: 1, borderColor: C.gray100 }]}>
-            <Text style={[styles.statValue, { color: C.text }]}> 
+            <Text style={[styles.statValue, { color: C.text }]}>
               {employeeDetails?.employment_type || 'Full Time'}
             </Text>
             <Text style={[styles.statLabel, { color: C.subText }]}>Type</Text>
@@ -251,9 +250,9 @@ export default function ProfileScreen() {
             <Text style={[styles.pickerTitle, { color: C.text }]}>Update Profile Photo</Text>
             <View style={styles.pickerOptions}>
               <TouchableOpacity style={styles.pickerOption} onPress={takePhoto}>
-                    <View style={[styles.optionIcon, { backgroundColor: isDarkMode ? '#334155' : '#EEF2FF' }]}>
-                      <IconSymbol name="camera.fill" size={24} color={C.subText} />
-                    </View>
+                <View style={[styles.optionIcon, { backgroundColor: isDarkMode ? '#334155' : '#EEF2FF' }]}>
+                  <IconSymbol name="camera.fill" size={24} color={C.subText} />
+                </View>
                 <Text style={[styles.optionText, { color: C.subText }]}>Take Photo</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.pickerOption} onPress={pickImage}>

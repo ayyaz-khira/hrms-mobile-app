@@ -16,6 +16,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getSecureToken } from '../services/secureStore';
+import Skeleton from '@/components/ui/skeleton';
 import { useTheme } from '../context/ThemeContext';
 
 const GET_CHECKINS_API = 'https://staging.microcrispr.com/api/method/hrms_application.api.get_employee_checkins';
@@ -25,8 +27,9 @@ export default function CheckInScreen() {
 
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isCheckedIn, setIsCheckedIn] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [hasFetchedOnce, setHasFetchedOnce] = useState(false);
 
   const [lastCheckIn, setLastCheckIn] = useState<string | null>(null);
   const [lastCheckInRaw, setLastCheckInRaw] = useState<Date | null>(null);
@@ -44,6 +47,7 @@ export default function CheckInScreen() {
     success: '#4CAF50',
     danger: '#F44336',
     bg: isDarkMode ? '#0F172A' : '#F8F9FB',
+    white: '#FFFFFF',
   };
 
   const extractLogs = (result: any): any[] => {
@@ -66,14 +70,8 @@ export default function CheckInScreen() {
     else setLoading(true);
 
     try {
-      let token = await AsyncStorage.getItem('user_token');
+      const token = await getSecureToken();
       const userId = await AsyncStorage.getItem('user_id');
-
-      // Auto-fix: If token is legacy (no prefix) and looks like key:secret, add prefix
-      if (token && !token.startsWith('token ') && token.includes(':')) {
-        token = `token ${token}`;
-        await AsyncStorage.setItem('user_token', token);
-      }
 
       if (!token || !userId) return;
 
@@ -81,7 +79,7 @@ export default function CheckInScreen() {
         credentials: 'include',
         method: 'POST',
         headers: {
-          Authorization: token ? token.trim().replace(/^(bearer|token)\s+/i, '') : '',
+          Authorization: token.trim(),
           'Content-Type': 'application/json',
           Accept: 'application/json',
         },
@@ -165,7 +163,7 @@ export default function CheckInScreen() {
         setIsCheckedIn(!!checkInTime && !checkOutTime);
         setRecentHistory(grouped);
       }
-
+      setHasFetchedOnce(true);
     } catch (error) {
       console.error('Fetch Error:', error);
     } finally {
@@ -173,6 +171,27 @@ export default function CheckInScreen() {
       setRefreshing(false);
     }
   }, []);
+
+  const CheckInHistoryRowSkeleton = () => (
+    <View style={[styles.historyItem, { backgroundColor: C.card }]}>
+      <View style={styles.historyDateCol}>
+        <Skeleton width={30} height={14} style={{ marginBottom: 4 }} />
+        <Skeleton width={45} height={10} />
+      </View>
+      <View style={styles.historyDetailsCol}>
+        <View style={styles.historyTimeRow}>
+          <View style={styles.historyTimeSubRow}>
+            <Skeleton width={18} height={10} style={{ marginRight: 6 }} />
+            <Skeleton width={40} height={12} />
+          </View>
+          <View style={styles.historyTimeSubRow}>
+            <Skeleton width={24} height={10} style={{ marginRight: 6 }} />
+            <Skeleton width={40} height={12} />
+          </View>
+        </View>
+      </View>
+    </View>
+  );
 
   const groupLogsByDate = (logs: any[]) => {
     const map = new Map();
@@ -379,32 +398,60 @@ export default function CheckInScreen() {
            <View style={[styles.staticCard, { backgroundColor: isDarkMode ? '#1E293B' : '#E9ECEF' }]}>
               <Text style={{ fontSize: 12, color: isDarkMode ? '#94A3B8' : '#64748B', fontWeight: '800', textAlign: 'center', marginTop: 15, marginBottom: 15 }}>Total Worked Hours</Text>
               
-              <View style={[styles.staticTimerBox, { backgroundColor: C.white, borderRadius: 15, padding: 15, marginHorizontal: 15, marginBottom: 20 }]}>
-                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-                    <View style={{ alignItems: 'center', gap: 6 }}>
-                       <View style={{ flexDirection: 'row', gap: 4 }}>
-                          <View style={styles.digitBox}><Text style={styles.digitText}>{(workedTime.split(':')[0] || '00')[0] || '0'}</Text></View>
-                          <View style={styles.digitBox}><Text style={styles.digitText}>{(workedTime.split(':')[0] || '00')[1] || '0'}</Text></View>
+              <View style={[styles.staticTimerBox, { backgroundColor: isDarkMode ? '#0F172A' : '#FFFFFF', borderRadius: 15, padding: 15, marginHorizontal: 15, marginBottom: 20 }]}>
+                 {(!hasFetchedOnce && loading) ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 6 }}>
+                       <View style={{ alignItems: 'center', gap: 6 }}>
+                          <View style={{ flexDirection: 'row', gap: 4 }}>
+                             <Skeleton width={24} height={32} borderRadius={6} />
+                             <Skeleton width={24} height={32} borderRadius={6} />
+                          </View>
+                          <Skeleton width={32} height={8} />
                        </View>
-                       <Text style={styles.digitSub}>HOURS</Text>
-                    </View>
-                    <Text style={styles.colon}>:</Text>
-                    <View style={{ alignItems: 'center', gap: 6 }}>
-                       <View style={{ flexDirection: 'row', gap: 4 }}>
-                          <View style={styles.digitBox}><Text style={styles.digitText}>{(workedTime.split(':')[1] || '00')[0] || '0'}</Text></View>
-                          <View style={styles.digitBox}><Text style={styles.digitText}>{(workedTime.split(':')[1] || '00')[1] || '0'}</Text></View>
+                       <Text style={[styles.colon, { marginTop: -6 }]}>:</Text>
+                       <View style={{ alignItems: 'center', gap: 6 }}>
+                          <View style={{ flexDirection: 'row', gap: 4 }}>
+                             <Skeleton width={24} height={32} borderRadius={6} />
+                             <Skeleton width={24} height={32} borderRadius={6} />
+                          </View>
+                          <Skeleton width={40} height={8} />
                        </View>
-                       <Text style={styles.digitSub}>MINUTES</Text>
-                    </View>
-                    <Text style={styles.colon}>:</Text>
-                    <View style={{ alignItems: 'center', gap: 6 }}>
-                       <View style={{ flexDirection: 'row', gap: 4 }}>
-                          <View style={styles.digitBox}><Text style={styles.digitText}>{(workedTime.split(':')[2] || '00')[0] || '0'}</Text></View>
-                          <View style={styles.digitBox}><Text style={styles.digitText}>{(workedTime.split(':')[2] || '00')[1] || '0'}</Text></View>
+                       <Text style={[styles.colon, { marginTop: -6 }]}>:</Text>
+                       <View style={{ alignItems: 'center', gap: 6 }}>
+                          <View style={{ flexDirection: 'row', gap: 4 }}>
+                             <Skeleton width={24} height={32} borderRadius={6} />
+                             <Skeleton width={24} height={32} borderRadius={6} />
+                          </View>
+                          <Skeleton width={44} height={8} />
                        </View>
-                       <Text style={styles.digitSub}>SECONDS</Text>
                     </View>
-                 </View>
+                 ) : (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                       <View style={{ alignItems: 'center', gap: 6 }}>
+                          <View style={{ flexDirection: 'row', gap: 4 }}>
+                             <View style={styles.digitBox}><Text style={styles.digitText}>{(workedTime.split(':')[0] || '00')[0] || '0'}</Text></View>
+                             <View style={styles.digitBox}><Text style={styles.digitText}>{(workedTime.split(':')[0] || '00')[1] || '0'}</Text></View>
+                          </View>
+                          <Text style={styles.digitSub}>HOURS</Text>
+                       </View>
+                       <Text style={styles.colon}>:</Text>
+                       <View style={{ alignItems: 'center', gap: 6 }}>
+                          <View style={{ flexDirection: 'row', gap: 4 }}>
+                             <View style={styles.digitBox}><Text style={styles.digitText}>{(workedTime.split(':')[1] || '00')[0] || '0'}</Text></View>
+                             <View style={styles.digitBox}><Text style={styles.digitText}>{(workedTime.split(':')[1] || '00')[1] || '0'}</Text></View>
+                          </View>
+                          <Text style={styles.digitSub}>MINUTES</Text>
+                       </View>
+                       <Text style={styles.colon}>:</Text>
+                       <View style={{ alignItems: 'center', gap: 6 }}>
+                          <View style={{ flexDirection: 'row', gap: 4 }}>
+                             <View style={styles.digitBox}><Text style={styles.digitText}>{(workedTime.split(':')[2] || '00')[0] || '0'}</Text></View>
+                             <View style={styles.digitBox}><Text style={styles.digitText}>{(workedTime.split(':')[2] || '00')[1] || '0'}</Text></View>
+                          </View>
+                          <Text style={styles.digitSub}>SECONDS</Text>
+                       </View>
+                    </View>
+                 )}
               </View>
 
               <View style={{ height: 1, backgroundColor: 'rgba(0,0,0,0.05)', width: '100%', marginBottom: 15 }} />
@@ -412,12 +459,20 @@ export default function CheckInScreen() {
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%', paddingHorizontal: 20, paddingBottom: 20 }}>
                  <View style={{ alignItems: 'flex-start' }}>
                     <Text style={{ fontSize: 11, fontWeight: '800', color: '#4CAF50', marginBottom: 2 }}>Check In</Text>
-                    <Text style={{ fontSize: 14, fontWeight: '900', color: C.text }}>{lastCheckIn || '--:--'}</Text>
+                    {(!hasFetchedOnce && loading) ? (
+                       <Skeleton width={50} height={16} style={{ marginTop: 2 }} />
+                    ) : (
+                       <Text style={{ fontSize: 14, fontWeight: '900', color: C.text }}>{lastCheckIn || '--:--'}</Text>
+                    )}
                  </View>
-
+ 
                  <View style={{ alignItems: 'flex-end' }}>
                     <Text style={{ fontSize: 11, fontWeight: '800', color: '#F44336', marginBottom: 2 }}>Check Out</Text>
-                    <Text style={{ fontSize: 14, fontWeight: '900', color: C.text }}>{lastCheckOut || '--:--'}</Text>
+                    {(!hasFetchedOnce && loading) ? (
+                       <Skeleton width={50} height={16} style={{ marginTop: 2 }} />
+                    ) : (
+                       <Text style={{ fontSize: 14, fontWeight: '900', color: C.text }}>{lastCheckOut || '--:--'}</Text>
+                    )}
                  </View>
               </View>
            </View>
@@ -449,6 +504,12 @@ export default function CheckInScreen() {
                 </View>
               </View>
             ))
+          ) : (!hasFetchedOnce && (loading || refreshing)) ? (
+            <React.Fragment>
+              <CheckInHistoryRowSkeleton />
+              <CheckInHistoryRowSkeleton />
+              <CheckInHistoryRowSkeleton />
+            </React.Fragment>
           ) : (
             <View style={[styles.emptyState, { backgroundColor: C.card }]}>
               <Text style={{ color: C.subText }}>No recent activity found</Text>

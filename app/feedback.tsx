@@ -15,6 +15,7 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { router } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getSecureToken } from '../services/secureStore';
 
 export default function FeedbackScreen() {
   const { isDarkMode } = useTheme();
@@ -47,12 +48,12 @@ export default function FeedbackScreen() {
 
     setLoading(true);
     try {
-      const token = await AsyncStorage.getItem('user_token');
+      const token = await getSecureToken();
       const userId = await AsyncStorage.getItem('user_id');
       
       // In a real app, you'd call your Feedback API here
       // const response = await fetch('...', { ... });
-        credentials: 'include',
+      //   credentials: 'include',
       
       // Simulating API call
       await new Promise(resolve => setTimeout(resolve, 1500));

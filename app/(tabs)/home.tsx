@@ -2,7 +2,7 @@ import Card from '@/components/ui/card';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import Skeleton from '@/components/ui/skeleton';
 import { getUIColors } from '@/constants/ui';
-import { apiFetch, apiJson } from '@/services/api';
+import { apiFetch, apiJson, getAuthHeader } from '@/services/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router, useFocusEffect } from 'expo-router';
 import React, { useCallback, useState } from 'react';
@@ -45,44 +45,10 @@ export default function HomeScreen() {
   const [lastCheckInRaw, setLastCheckInRaw] = useState<Date | null>(null);
   const [recentHistory, setRecentHistory] = useState<any[]>([]);
   const [allAttendance, setAllAttendance] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [hasFetchedOnce, setHasFetchedOnce] = useState(false);
 
-  const getAuthHeader = async (): Promise<string | null> => {
-    const rawToken = await AsyncStorage.getItem('user_token');
-    if (!rawToken) return null;
-
-    const token = rawToken.trim();
-    return token.replace(/^(bearer|token)\s+/i, '');
-  };
-
-  // ====================== LOAD DASHBOARD ======================
-  useFocusEffect(
-    useCallback(() => {
-      loadDashboardData();
-      
-      // Heartbeat to keep session alive (every 1 minute)
-      const heartbeat = setInterval(async () => {
-        const authHeader = await getAuthHeader();
-        const userId = await AsyncStorage.getItem('user_id');
-        if (authHeader && userId) {
-          fetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_employee_details', {
-        credentials: 'include',
-            method: 'POST',
-            headers: { 
-              'Authorization': authHeader, 
-              'Content-Type': 'application/json',
-              'X-Requested-With': 'XMLHttpRequest' 
-            },
-            body: JSON.stringify({ employee: userId.trim() })
-          }).catch(() => {});
-        }
-      }, 60000);
-
-      return () => clearInterval(heartbeat);
-    }, [])
-  );
-
-  const loadDashboardData = async () => {
+  const loadDashboardData = useCallback(async () => {
     setLoading(true);
     try {
       const savedName = await AsyncStorage.getItem('user_name');
@@ -96,23 +62,26 @@ export default function HomeScreen() {
         return;
       }
 
-      const commonHeaders: any = {
-        Authorization: authHeader,
-        sid: !authHeader.toLowerCase().includes("token") ? authHeader : undefined,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        'X-Requested-With': 'XMLHttpRequest',
-      };
-
       // Fetch Attendance Summary for current month stats
       const now = new Date();
       const firstDay = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
       const lastDay = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()}`;
-      
-      const attendResponse = await apiFetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_attendance', {
-        method: 'POST',
-        body: { employee: userId.trim(), from_date: firstDay, to_date: lastDay }
-      });
+
+      const employee = userId.trim();
+      const [attendResponse, checkinsResult, detailsResult] = await Promise.all([
+        apiFetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_attendance', {
+          method: 'POST',
+          body: { employee, from_date: firstDay, to_date: lastDay }
+        }),
+        apiJson('https://staging.microcrispr.com/api/method/hrms_application.api.get_employee_checkins', {
+          method: 'POST',
+          body: { employee, limit_page_length: 50 }
+        }),
+        apiJson('https://staging.microcrispr.com/api/method/hrms_application.api.get_employee_details', {
+          method: 'POST',
+          body: { employee }
+        }),
+      ]);
 
       let presentCount = 0;
       if (attendResponse.ok) {
@@ -128,12 +97,6 @@ export default function HomeScreen() {
         presentCount = presentDates.size;
       }
 
-      const { res: response, json: result } = await apiJson('https://staging.microcrispr.com/api/method/hrms_application.api.get_employee_checkins', {
-        method: 'POST', body: { employee: userId.trim() }
-      });
-
-      if (!response.ok) return;
-      
       const extractLogs = (res: any): any[] => {
         if (!res) return [];
         if (Array.isArray(res)) return res;
@@ -144,7 +107,7 @@ export default function HomeScreen() {
         return [];
       };
 
-      const logs = extractLogs(result);
+      const logs = checkinsResult.res.ok ? extractLogs(checkinsResult.json) : [];
 
       if (logs.length > 0) {
         const map = new Map();
@@ -152,15 +115,15 @@ export default function HomeScreen() {
           if (!l.time) return;
           const d = new Date(l.time);
           const dateKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-          
+
           if (!map.has(dateKey)) {
-            map.set(dateKey, { 
-              dateKey, 
-              date: d.toLocaleDateString([], { day: '2-digit', month: 'short' }), 
-              in: null, 
-              out: null, 
-              inRaw: null, 
-              outRaw: null 
+            map.set(dateKey, {
+              dateKey,
+              date: d.toLocaleDateString([], { day: '2-digit', month: 'short' }),
+              in: null,
+              out: null,
+              inRaw: null,
+              outRaw: null
             });
           }
 
@@ -202,24 +165,50 @@ export default function HomeScreen() {
           setLastCheckInRaw(null);
           setDashboardData(prev => ({ ...prev, checkIn: '--:--', checkOut: '--:--', workedHours: '00:00:00', presentDays: presentCount }));
         }
+      } else {
+        setRecentHistory([]);
+        setIsCheckedIn(false);
+        setLastCheckInRaw(null);
+        setDashboardData(prev => ({ ...prev, checkIn: '--:--', checkOut: '--:--', workedHours: '00:00:00', presentDays: presentCount }));
       }
 
       // Employee Details
-      const { res: detailsRes, json: detailsData } = await apiJson('https://staging.microcrispr.com/api/method/hrms_application.api.get_employee_details', { method: 'POST', body: { employee: userId.trim() } });
-      if (detailsRes.ok) {
-        if (detailsData.message?.employee_name) setUserName(detailsData.message.employee_name);
+      if (detailsResult.res.ok) {
+        if (detailsResult.json.message?.employee_name) setUserName(detailsResult.json.message.employee_name);
       }
+      setHasFetchedOnce(true);
     } catch (e) {
       console.error("❌ Dashboard Load Error:", e);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
+  // ====================== LOAD DASHBOARD ======================
   useFocusEffect(
     useCallback(() => {
       loadDashboardData();
-    }, [])
+
+      // Heartbeat to keep session alive (every 1 minute)
+      const heartbeat = setInterval(async () => {
+        const authHeader = await getAuthHeader();
+        const userId = await AsyncStorage.getItem('user_id');
+        if (authHeader && userId) {
+          fetch('https://staging.microcrispr.com/api/method/hrms_application.api.get_employee_details', {
+            credentials: 'include',
+            method: 'POST',
+            headers: {
+              'Authorization': authHeader,
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({ employee: userId.trim() })
+          }).catch(() => { });
+        }
+      }, 60000);
+
+      return () => clearInterval(heartbeat);
+    }, [loadDashboardData])
   );
 
   // Timer Effect
@@ -310,44 +299,44 @@ export default function HomeScreen() {
 
   const calculateHours = (inT: string | null | undefined, outT: string | null | undefined) => {
     if (!inT || !outT || inT === '-' || outT === '-') return '-';
-    
+
     const parseTime = (timeStr: string) => {
-       // Expecting "HH:mm"
-       let [h, m] = timeStr.split(':').map(Number);
-       return { h, m };
+      // Expecting "HH:mm"
+      let [h, m] = timeStr.split(':').map(Number);
+      return { h, m };
     };
 
     try {
-       const start = parseTime(inT);
-       const end = parseTime(outT);
-       
-       let diffMins = (end.h * 60 + end.m) - (start.h * 60 + start.m);
-       if (diffMins < 0) return '-';
+      const start = parseTime(inT);
+      const end = parseTime(outT);
 
-       const hrs = Math.floor(diffMins / 60);
-       const mins = diffMins % 60;
-       return `${hrs.toString().padStart(2, '0')}h ${mins.toString().padStart(2, '0')}m`;
+      let diffMins = (end.h * 60 + end.m) - (start.h * 60 + start.m);
+      if (diffMins < 0) return '-';
+
+      const hrs = Math.floor(diffMins / 60);
+      const mins = diffMins % 60;
+      return `${hrs.toString().padStart(2, '0')}h ${mins.toString().padStart(2, '0')}m`;
     } catch (e) {
-       return '-';
+      return '-';
     }
   };
 
   const getDayDetails = (day: number) => {
     const log = getLogForDay(day);
     if (log) {
-       const inTime = cleanTime(log.in_time);
-       const outTime = cleanTime(log.out_time);
-       const workingHours = log.total_working_hours && log.total_working_hours !== '--:--' && log.total_working_hours !== '-'
-          ? log.total_working_hours 
-          : calculateHours(inTime, outTime);
+      const inTime = cleanTime(log.in_time);
+      const outTime = cleanTime(log.out_time);
+      const workingHours = log.total_working_hours && log.total_working_hours !== '--:--' && log.total_working_hours !== '-'
+        ? log.total_working_hours
+        : calculateHours(inTime, outTime);
 
-       return { 
-          checkIn: inTime, 
-          checkOut: outTime, 
-          workingHours: workingHours, 
-          shift: log.shift || 'G Shift',
-          status: log.status
-       };
+      return {
+        checkIn: inTime,
+        checkOut: outTime,
+        workingHours: workingHours,
+        shift: log.shift || 'G Shift',
+        status: log.status
+      };
     }
     return { checkIn: '-', checkOut: '-', workingHours: '-', shift: '-', status: 'Absent' };
   };
@@ -440,7 +429,7 @@ export default function HomeScreen() {
     actionIconBg: { width: 56, height: 56, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginBottom: 8, overflow: 'hidden', elevation: 0, shadowOpacity: 0, backgroundColor: 'transparent' },
     actionLabel: { fontSize: 12, fontWeight: '700', color: C.gray900, textAlign: 'center' },
     announcementList: {
-      backgroundColor: C.white,
+      backgroundColor: C.card,
       borderRadius: 20,
       padding: 15,
       elevation: 2,
@@ -454,7 +443,7 @@ export default function HomeScreen() {
     announcementTitle: { fontSize: 14, fontWeight: '700', color: C.gray900, marginBottom: 2 },
     announcementTime: { fontSize: 11, color: C.gray600 },
     modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 },
-    calendarContainer: { width: '90%', backgroundColor: C.white, borderRadius: 24, padding: 20, elevation: 10 },
+    calendarContainer: { width: '90%', backgroundColor: C.card, borderRadius: 24, padding: 20, elevation: 10 },
     calendarHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
     calendarTitle: { fontSize: 18, fontWeight: '800', color: C.gray900 },
     closeBtn: { padding: 4 },
@@ -546,8 +535,8 @@ export default function HomeScreen() {
         <Text style={styles.workingHours}>{workingHours ? workingHours : '-'}</Text>
       </View>
 
-      <View style={styles.rowRight}> 
-        <View style={[styles.statusBadgeSmall, { backgroundColor: color + '12' }]}> 
+      <View style={styles.rowRight}>
+        <View style={[styles.statusBadgeSmall, { backgroundColor: color + '12' }]}>
           <Text style={[styles.statusTextSmall, { color: color }]}>{status}</Text>
         </View>
         <IconSymbol name="chevron.right" size={18} color={C.gray400} />
@@ -583,6 +572,38 @@ export default function HomeScreen() {
     </View>
   );
 
+  const AttendanceRowSkeleton = () => (
+    <View style={styles.attendanceRow}>
+      <Skeleton width={56} height={56} borderRadius={12} style={{ marginRight: 12 }} />
+      <View style={styles.timeColumn}>
+        <View style={styles.timeRow}>
+          <View>
+            <Skeleton width={45} height={10} style={{ marginBottom: 6 }} />
+            <Skeleton width={60} height={16} />
+          </View>
+          <View style={{ marginLeft: 18 }}>
+            <Skeleton width={50} height={10} style={{ marginBottom: 6 }} />
+            <Skeleton width={60} height={16} />
+          </View>
+        </View>
+        <Skeleton width={80} height={12} style={{ marginTop: 10 }} />
+      </View>
+      <View style={styles.rowRight}>
+        <Skeleton width={70} height={26} borderRadius={13} />
+      </View>
+    </View>
+  );
+
+  const AnnouncementSkeleton = () => (
+    <View style={styles.announcementItem}>
+      <Skeleton width={8} height={8} borderRadius={4} />
+      <View style={{ flex: 1 }}>
+        <Skeleton width="85%" height={14} style={{ marginBottom: 6 }} />
+        <Skeleton width="35%" height={10} />
+      </View>
+    </View>
+  );
+
   return (
     <View style={[styles.safeArea, { backgroundColor: C.bg }]}>
       <StatusBar barStyle={isDarkMode ? "light-content" : "dark-content"} />
@@ -612,98 +633,126 @@ export default function HomeScreen() {
           {/* Main Dashboard Card */}
           <Card style={[styles.dashboardCard, { backgroundColor: C.card }]}>
             <View style={{ position: 'relative' }}>
-            <View style={styles.timerContainerLarge}>
-              <View style={styles.timerHeaderLarge}>
-                <View>
-                  <Text style={styles.timerLabel}>Total Worked</Text>
-                  {loading ? (
-                    <Skeleton width={160} height={34} style={{ borderRadius: 8 }} />
-                  ) : (
-                    <Text style={styles.timerBig}>{dashboardData.workedHours}</Text>
-                  )}
-                </View>
-                <View style={{ alignItems: 'flex-end' }}>
-                  <TouchableOpacity onPress={() => router.push('/check-in')} style={styles.historyBtn}>
-                    <Text style={styles.historyBtnText}>History</Text>
-                  </TouchableOpacity>
-                  <Text style={[styles.smallMuted, { marginTop: 8 }]}>{isCheckedIn ? 'Clocked In' : 'Not Clocked In'}</Text>
+              <View style={styles.timerContainerLarge}>
+                <View style={styles.timerHeaderLarge}>
+                  <View>
+                    <Text style={styles.timerLabel}>Total Worked</Text>
+                    {(!hasFetchedOnce && loading) ? (
+                      <Skeleton width={120} height={28} style={{ marginTop: 8, marginBottom: 4 }} />
+                    ) : (
+                      <Text style={styles.timerBig}>{dashboardData.workedHours}</Text>
+                    )}
+                  </View>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <TouchableOpacity onPress={() => router.push('/check-in')} style={styles.historyBtn}>
+                      <Text style={styles.historyBtnText}>History</Text>
+                    </TouchableOpacity>
+                    {(!hasFetchedOnce && loading) ? (
+                      <Skeleton width={90} height={14} style={{ marginTop: 8 }} />
+                    ) : (
+                      <Text style={[styles.smallMuted, { marginTop: 8 }]}>{isCheckedIn ? 'Clocked In' : 'Not Clocked In'}</Text>
+                    )}
+                  </View>
                 </View>
               </View>
-            </View>
 
-            <View style={styles.dashboardDivider} />
+              <View style={styles.dashboardDivider} />
 
               <View style={styles.checkInOutRowCompact}>
-              <View style={[styles.checkBlock, { alignItems: 'flex-start' }]}>
-                <Text style={styles.checkLabel}>Check In</Text>
-                {loading ? <Skeleton width={60} height={18} /> : <Text style={styles.checkValue}>{dashboardData.checkIn || '--:--'}</Text>}
-              </View>
-
-              <View style={styles.iconCenter}>
-                <IconSymbol name="arrow.right" size={18} color={C.gray200} />
-              </View>
-
-              <View style={[styles.checkBlock, { alignItems: 'flex-end' }]}>
-                <Text style={styles.checkLabel}>Check Out</Text>
-                {loading ? <Skeleton width={60} height={18} /> : <Text style={styles.checkValue}>{dashboardData.checkOut || '--:--'}</Text>}
-              </View>
-            </View>
-
-            <View style={{ marginTop: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <View>
-                <Text style={styles.statLabel}>Present days</Text>
-                {loading ? <Skeleton width={48} height={20} /> : <Text style={styles.statValue}>{dashboardData.presentDays}</Text>}
-              </View>
-              {!isCheckedIn ? (
-                <TouchableOpacity onPress={handlePunch} style={styles.punchBtn} disabled={isPunching} accessibilityRole="button" accessibilityLabel="Punch in">
-                  {isPunching ? <ActivityIndicator color="#fff" /> : <Text style={styles.punchTxt}>Punch In</Text>}
-                </TouchableOpacity>
-              ) : (
-                <View style={styles.checkedPill} accessibilityRole="text" accessibilityLabel="Checked in">
-                  <Text style={styles.checkedTxt}>Checked In</Text>
+                <View style={[styles.checkBlock, { alignItems: 'flex-start' }]}>
+                  <Text style={styles.checkLabel}>Check In</Text>
+                  {(!hasFetchedOnce && loading) ? (
+                    <Skeleton width={60} height={16} style={{ marginTop: 6, marginBottom: 2 }} />
+                  ) : (
+                    <Text style={styles.checkValue}>{dashboardData.checkIn || '--:--'}</Text>
+                  )}
                 </View>
-              )}
-            </View>
+
+                <View style={styles.iconCenter}>
+                  <IconSymbol name="arrow.right" size={18} color={C.gray200} />
+                </View>
+
+                <View style={[styles.checkBlock, { alignItems: 'flex-end' }]}>
+                  <Text style={styles.checkLabel}>Check Out</Text>
+                  {(!hasFetchedOnce && loading) ? (
+                    <Skeleton width={60} height={16} style={{ marginTop: 6, marginBottom: 2 }} />
+                  ) : (
+                    <Text style={styles.checkValue}>{dashboardData.checkOut || '--:--'}</Text>
+                  )}
+                </View>
+              </View>
+
+              <View style={{ marginTop: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <View>
+                  <Text style={styles.statLabel}>Present days</Text>
+                  {(!hasFetchedOnce && loading) ? (
+                    <Skeleton width={40} height={16} style={{ marginTop: 6, marginBottom: 2 }} />
+                  ) : (
+                    <Text style={styles.statValue}>{dashboardData.presentDays}</Text>
+                  )}
+                </View>
+                {(!hasFetchedOnce && loading) ? (
+                  <Skeleton width={96} height={36} borderRadius={12} />
+                ) : !isCheckedIn ? (
+                  <TouchableOpacity onPress={handlePunch} style={styles.punchBtn} disabled={isPunching} accessibilityRole="button" accessibilityLabel="Punch in">
+                    {isPunching ? <ActivityIndicator color="#fff" /> : <Text style={styles.punchTxt}>Punch In</Text>}
+                  </TouchableOpacity>
+                ) : (
+                  <View style={styles.checkedPill} accessibilityRole="text" accessibilityLabel="Checked in">
+                    <Text style={styles.checkedTxt}>Checked In</Text>
+                  </View>
+                )}
+              </View>
             </View>
           </Card>
 
           {/* Stats Row */}
           <View style={styles.statsRow}>
-            {loading ? (
-              <>
-                <View style={[styles.statCard, { justifyContent: 'center', alignItems: 'center' }]}> 
-                  <Skeleton width={36} height={36} style={{ borderRadius: 10, marginBottom: 8 }} />
-                  <Skeleton width={80} height={20} />
-                </View>
-
-                <View style={[styles.statCard, { justifyContent: 'center', alignItems: 'center' }]}> 
-                  <Skeleton width={36} height={36} style={{ borderRadius: 10, marginBottom: 8 }} />
-                  <Skeleton width={80} height={20} />
-                </View>
-              </>
-            ) : (
-              <>
-              <TouchableOpacity style={styles.statCard} onPress={() => setIsCalendarVisible(true)}>
-                <View style={[styles.statIconContainer, { backgroundColor: isDarkMode ? '#1E293B' : '#F0F3FF' }]}>
+            <TouchableOpacity style={styles.statCard} onPress={() => setIsCalendarVisible(true)}>
+              <View style={[styles.statIconContainer, { backgroundColor: isDarkMode ? '#1E293B' : '#F0F3FF' }]}>
+                {(!hasFetchedOnce && loading) ? (
+                  <Skeleton width={20} height={20} borderRadius={10} />
+                ) : (
                   <IconSymbol name="calendar" size={20} color={C.primary} />
-                </View>
-                <View>
-                  <Text style={styles.statValue}>{dashboardData.presentDays}</Text>
-                  <Text style={styles.statLabel}>Present days</Text>
-                </View>
-              </TouchableOpacity>
+                )}
+              </View>
+              <View style={{ flex: 1 }}>
+                {(!hasFetchedOnce && loading) ? (
+                  <React.Fragment>
+                    <Skeleton width={40} height={18} style={{ marginBottom: 4 }} />
+                    <Skeleton width={70} height={10} />
+                  </React.Fragment>
+                ) : (
+                  <React.Fragment>
+                    <Text style={styles.statValue}>{dashboardData.presentDays}</Text>
+                    <Text style={styles.statLabel}>Present days</Text>
+                  </React.Fragment>
+                )}
+              </View>
+            </TouchableOpacity>
 
-              <TouchableOpacity style={styles.statCard} onPress={() => router.push('/leave')}>
-                <View style={[styles.statIconContainer, { backgroundColor: isDarkMode ? '#1E293B' : '#E8F5E9' }]}>
+            <TouchableOpacity style={styles.statCard} onPress={() => router.push('/leave')}>
+              <View style={[styles.statIconContainer, { backgroundColor: isDarkMode ? '#1E293B' : '#E8F5E9' }]}>
+                {(!hasFetchedOnce && loading) ? (
+                  <Skeleton width={20} height={20} borderRadius={10} />
+                ) : (
                   <IconSymbol name="location.fill" size={20} color={C.success} />
-                </View>
-                <View>
-                  <Text style={styles.statValue}>{dashboardData.leaveBalance}</Text>
-                  <Text style={styles.statLabel}>Leave balance</Text>
-                </View>
-              </TouchableOpacity>
-              </>
-            )}
+                )}
+              </View>
+              <View style={{ flex: 1 }}>
+                {(!hasFetchedOnce && loading) ? (
+                  <React.Fragment>
+                    <Skeleton width={40} height={18} style={{ marginBottom: 4 }} />
+                    <Skeleton width={75} height={10} />
+                  </React.Fragment>
+                ) : (
+                  <React.Fragment>
+                    <Text style={styles.statValue}>{dashboardData.leaveBalance}</Text>
+                    <Text style={styles.statLabel}>Leave balance</Text>
+                  </React.Fragment>
+                )}
+              </View>
+            </TouchableOpacity>
           </View>
 
           {/* Quick Actions */}
@@ -743,6 +792,14 @@ export default function HomeScreen() {
                   {i < recentHistory.length - 1 && <View style={styles.divider} />}
                 </React.Fragment>
               ))
+            ) : (!hasFetchedOnce && loading) ? (
+              <React.Fragment>
+                <AttendanceRowSkeleton />
+                <View style={styles.divider} />
+                <AttendanceRowSkeleton />
+                <View style={styles.divider} />
+                <AttendanceRowSkeleton />
+              </React.Fragment>
             ) : (
               <View style={{ padding: 20, alignItems: 'center' }}>
                 <Text style={{ color: C.gray600 }}>No recent attendance data</Text>
@@ -758,9 +815,19 @@ export default function HomeScreen() {
             </TouchableOpacity>
           </View>
           <View style={styles.announcementList}>
-            <AnnouncementItem title="Company meeting at 4 PM" time="10:30 AM" dotColor="#4361EE" />
-            <View style={styles.divider} />
-            <AnnouncementItem title="New policy update" time="09:15 AM" dotColor="#FF9800" />
+            {(!hasFetchedOnce && loading) ? (
+              <React.Fragment>
+                <AnnouncementSkeleton />
+                <View style={styles.divider} />
+                <AnnouncementSkeleton />
+              </React.Fragment>
+            ) : (
+              <React.Fragment>
+                <AnnouncementItem title="Company meeting at 4 PM" time="10:30 AM" dotColor="#4361EE" />
+                <View style={styles.divider} />
+                <AnnouncementItem title="New policy update" time="09:15 AM" dotColor="#FF9800" />
+              </React.Fragment>
+            )}
           </View>
           <View style={{ height: 100 }} />
         </ScrollView>
@@ -785,13 +852,13 @@ export default function HomeScreen() {
                   const isLeave = log && (log.status === 'On Leave' || log.status === 'Leave');
                   const isAbsent = log && log.status === 'Absent';
                   const isSelected = selectedDay === day;
-                  
+
                   return (
                     <TouchableOpacity key={day} style={styles.dayBox} onPress={() => setSelectedDay(day)}>
                       <View style={[
-                        styles.dayCircle, 
-                        isPresent && styles.presentBox, 
-                        isLeave && styles.leaveBox, 
+                        styles.dayCircle,
+                        isPresent && styles.presentBox,
+                        isLeave && styles.leaveBox,
                         isAbsent && styles.absentBox,
                         isSelected && styles.selectedDayCircle
                       ]}>

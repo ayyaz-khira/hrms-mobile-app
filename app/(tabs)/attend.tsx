@@ -3,6 +3,7 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { getUIColors } from '@/constants/ui';
 import { apiFetch, apiJson } from '@/services/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getSecureToken, deleteSecureToken } from '../../services/secureStore';
 import { router, useFocusEffect } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Dimensions, Modal, Pressable, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
@@ -33,12 +34,12 @@ export default function AttendanceDetailsScreen() {
       const fetchAttendance = async () => {
         setLoading(true);
         try {
-          const rawToken = await AsyncStorage.getItem('user_token');
+          const rawToken = await getSecureToken();
           const userId = await AsyncStorage.getItem('user_id');
 
           if (!rawToken || !userId) return;
 
-          const authHeader = rawToken.trim().replace(/^(bearer|token)\s+/i, '');
+          const authHeader = rawToken.trim();
           const commonHeaders: any = {
             Authorization: authHeader,
             sid: !authHeader.toLowerCase().includes('token') ? authHeader : undefined,
@@ -70,7 +71,8 @@ export default function AttendanceDetailsScreen() {
             }
             if (status === 417 || status === 401) {
               console.warn('Session expired while fetching attendance', status);
-              await AsyncStorage.multiRemove(['user_token', 'user_id', 'employee_details']);
+              await deleteSecureToken();
+              await AsyncStorage.multiRemove(['user_id', 'employee_details']);
               router.replace('/');
               return;
             }
@@ -128,7 +130,8 @@ export default function AttendanceDetailsScreen() {
               setCheckinsMap(map);
               if (checkStatus === 417 || checkStatus === 401) {
                 console.warn('Session expired while fetching checkins', checkStatus);
-                await AsyncStorage.multiRemove(['user_token', 'user_id', 'employee_details']);
+                await deleteSecureToken();
+                await AsyncStorage.multiRemove(['user_id', 'employee_details']);
                 router.replace('/');
                 return;
               }

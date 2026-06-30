@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, StatusBar, Platform } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { router } from 'expo-router';
-import { useTheme } from '../context/ThemeContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Modal, TextInput, ActivityIndicator, Alert, KeyboardAvoidingView } from 'react-native';
+import { router } from 'expo-router';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useTheme } from '../context/ThemeContext';
+import { getSecureToken } from '../services/secureStore';
 
 export default function AssetScreen() {
   const { isDarkMode } = useTheme();
@@ -21,15 +21,15 @@ export default function AssetScreen() {
   useEffect(() => {
     const fetchAssets = async () => {
       try {
-        const token = await AsyncStorage.getItem('user_token');
+        const token = await getSecureToken();
         const userId = await AsyncStorage.getItem('user_id');
         const apiUrl = 'https://staging.microcrispr.com/api/method/hrms_application.api.get_employee_assets';
-        
+
         const response = await fetch(apiUrl, {
-        credentials: 'include',
+          credentials: 'include',
           method: 'POST',
           headers: {
-            'Authorization': token ? (token.toLowerCase().startsWith('bearer ') ? token : `Bearer ${token}`) : '',
+            'Authorization': token ? token.trim() : '',
             'Content-Type': 'application/json',
             'Accept': 'application/json',
           },
@@ -56,7 +56,7 @@ export default function AssetScreen() {
 
     setLoading(true);
     try {
-      const token = await AsyncStorage.getItem('user_token');
+      const token = await getSecureToken();
       const userId = await AsyncStorage.getItem('user_id');
       const apiUrl = 'https://staging.microcrispr.com/api/method/hrms_application.api.request_new_asset';
 
@@ -64,7 +64,7 @@ export default function AssetScreen() {
         credentials: 'include',
         method: 'POST',
         headers: {
-          'Authorization': token ? (token.toLowerCase().startsWith('bearer ') ? token : `Bearer ${token}`) : '',
+          'Authorization': token ? token.trim() : '',
           'Content-Type': 'application/json',
           'Accept': 'application/json',
         },
@@ -106,7 +106,7 @@ export default function AssetScreen() {
   return (
     <View style={[styles.mainContainer, { backgroundColor: C.bg }]}>
       <StatusBar barStyle="light-content" backgroundColor={C.dark} />
-      
+
       {/* Stabilized Header */}
       <View style={styles.headerContainer}>
         <View style={[styles.headerBg, { backgroundColor: C.dark }]}>
@@ -122,31 +122,31 @@ export default function AssetScreen() {
         </View>
       </View>
 
-      <ScrollView 
-        style={styles.content} 
+      <ScrollView
+        style={styles.content}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingTop: 20, paddingBottom: 50 }}
       >
         <View style={styles.summaryContainer}>
           <View style={[styles.infoCard, { backgroundColor: C.primary }]}>
-             <View style={styles.infoRow}>
-                <View>
-                   <Text style={styles.infoLabel}>Total Assigned</Text>
-                   <Text style={styles.infoValue}>{assetList.length.toString().padStart(2, '0')} Items</Text>
-                </View>
-                <View style={styles.badge}>
-                   <Text style={styles.badgeText}>Active</Text>
-                </View>
-             </View>
-             <View style={styles.cardFooterInfo}>
-                <IconSymbol name="person.badge.shield.check" size={14} color="rgba(255,255,255,0.8)" />
-                <Text style={styles.infoSub}>Last Verified: March 2026</Text>
-             </View>
+            <View style={styles.infoRow}>
+              <View>
+                <Text style={styles.infoLabel}>Total Assigned</Text>
+                <Text style={styles.infoValue}>{assetList.length.toString().padStart(2, '0')} Items</Text>
+              </View>
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>Active</Text>
+              </View>
+            </View>
+            <View style={styles.cardFooterInfo}>
+              <IconSymbol name="person.badge.shield.check" size={14} color="rgba(255,255,255,0.8)" />
+              <Text style={styles.infoSub}>Last Verified: March 2026</Text>
+            </View>
           </View>
         </View>
 
         <View style={styles.sectionHeader}>
-           <Text style={[styles.sectionTitle, { color: C.text }]}>My Assets</Text>
+          <Text style={[styles.sectionTitle, { color: C.text }]}>My Assets</Text>
         </View>
 
         <View style={styles.listContainer}>
@@ -157,36 +157,36 @@ export default function AssetScreen() {
                   <IconSymbol name={item.icon as any} size={24} color={item.color} />
                 </View>
                 <View style={styles.assetMain}>
-                   <Text style={[styles.assetName, { color: C.text }]}>{item.name}</Text>
-                   <Text style={[styles.assetSerial, { color: C.subText }]}>{item.serial}</Text>
+                  <Text style={[styles.assetName, { color: C.text }]}>{item.name}</Text>
+                  <Text style={[styles.assetSerial, { color: C.subText }]}>{item.serial}</Text>
                 </View>
                 <View style={[styles.statusBadge, { backgroundColor: item.status === 'Excellent' ? '#E8F5E9' : '#FFF3E0' }]}>
-                   <Text style={[styles.statusText, { color: item.status === 'Excellent' ? '#2E7D32' : '#E65100' }]}>{item.status}</Text>
+                  <Text style={[styles.statusText, { color: item.status === 'Excellent' ? '#2E7D32' : '#E65100' }]}>{item.status}</Text>
                 </View>
               </View>
-              
+
               <View style={[styles.assetDivider, { backgroundColor: C.gray100 }]} />
-              
+
               <View style={styles.assetInfoRow}>
-                 <View style={styles.infoItem}>
-                    <Text style={styles.infoItemLabel}>Category</Text>
-                    <Text style={[styles.infoItemValue, { color: C.text }]}>{item.category}</Text>
-                 </View>
-                 <View style={styles.infoItem}>
-                    <Text style={styles.infoItemLabel}>Assigned Date</Text>
-                    <Text style={[styles.infoItemValue, { color: C.text }]}>{item.date}</Text>
-                 </View>
-                 <TouchableOpacity style={styles.detailsBtn}>
-                    <IconSymbol name="chevron.right" size={16} color={C.primary} />
-                 </TouchableOpacity>
+                <View style={styles.infoItem}>
+                  <Text style={styles.infoItemLabel}>Category</Text>
+                  <Text style={[styles.infoItemValue, { color: C.text }]}>{item.category}</Text>
+                </View>
+                <View style={styles.infoItem}>
+                  <Text style={styles.infoItemLabel}>Assigned Date</Text>
+                  <Text style={[styles.infoItemValue, { color: C.text }]}>{item.date}</Text>
+                </View>
+                <TouchableOpacity style={styles.detailsBtn}>
+                  <IconSymbol name="chevron.right" size={16} color={C.primary} />
+                </TouchableOpacity>
               </View>
             </TouchableOpacity>
           ))}
         </View>
 
         <TouchableOpacity style={styles.requestBtn} onPress={() => setIsModalVisible(true)}>
-           <IconSymbol name="plus" size={18} color={C.primary} />
-           <Text style={[styles.requestBtnText, { color: C.primary }]}>Request New Asset</Text>
+          <IconSymbol name="plus" size={18} color={C.primary} />
+          <Text style={[styles.requestBtnText, { color: C.primary }]}>Request New Asset</Text>
         </TouchableOpacity>
       </ScrollView>
 
@@ -231,8 +231,8 @@ export default function AssetScreen() {
                 onChangeText={(t) => setRequestForm(p => ({ ...p, reason: t }))}
               />
 
-              <TouchableOpacity 
-                style={[styles.submitBtn, { backgroundColor: C.primary }]} 
+              <TouchableOpacity
+                style={[styles.submitBtn, { backgroundColor: C.primary }]}
                 onPress={handleRequestSubmit}
                 disabled={loading}
               >
